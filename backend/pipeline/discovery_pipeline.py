@@ -1,5 +1,5 @@
 """
-discovery_pipeline.py — Production Pipeline (v5.2)
+discovery_pipeline.py — Production Pipeline (v5.3)
 ===================================================
 FIXES v5.2
 ----------
@@ -38,6 +38,25 @@ FIX 4 — DepMap coverage (only 67 cell lines):
   The filter used 'OncotreeSubtype' which contains long strings like
   "Glioblastoma Multiforme (GBM)". The old regex 'Glioblastoma|Diffuse Midline Glioma'
   was case-sensitive and may not match all variants. Fixed with case=False + broader terms.
+
+FIXES v5.3
+----------
+FIX 5 — Transposed format parser not finding H3-3A:
+  The PNOC/PBTA dataset uses H3-3A as a row index (gene name) with K28M as the
+  mutation value. The old parser was looking for H3K27M as a column name and
+  sample_id as a row — completely backwards for this format.
+  
+  FIX: Re-reads file with index_col=0 so gene names are the row index,
+  matches H3-3A in the index, and checks for K28M/K27M values per sample.
+  G35R/G35V are correctly excluded (H3.3 mutations but NOT H3K27M).
+
+FIX 6 — BBB filter never called in scoring loop:
+  bbb_filter.py had Cilengitide correctly listed in KNOWN_GBM_FAILURES with a
+  0.1 score penalty, but filter_and_rank() was never called in ProductionPipeline.run().
+  The penalty was defined but never applied — so Cilengitide kept scoring normally.
+  
+  FIX: Added BBBFilter import and filter_and_rank() call after composite scoring,
+  before candidates are sorted and passed to hypothesis generator.
 """
 
 import asyncio
@@ -55,6 +74,7 @@ from .synergy_predictor import SynergyPredictor
 from .hypothesis_generator import HypothesisGenerator
 from .statistical_validator import StatisticalValidator
 from .tissue_expression import TissueExpressionScorer
+from .bbb_filter import BBBFilter
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +86,8 @@ class PedcBioPortalValidator:
     Supports two file formats:
       1. Standard cBioPortal format: rows=samples, columns include hugo_symbol,
          hgvsp_short, tumor_sample_barcode (most TCGA/CBTN datasets)
-      2. Transposed study format: rows=genes (as column headers like 'drd2','hdac1'),
-         columns=sample IDs (used in some DIPG-specific study exports)
+      2. Transposed study format: index=gene names (H3-3A, CDKN2A etc.),
+         columns=sample IDs (PNOC/PBTA format from cBioPortal download)
     """
 
     def __init__(self, data_dir: str = "data/validation/cbtn_genomics/"):
@@ -93,7 +113,7 @@ class PedcBioPortalValidator:
             if hugo_col and hgvs_col and sample_col:
                 return self._parse_standard_format(mut, hugo_col, hgvs_col, sample_col)
 
-            # ── Format 2: Transposed study format (genes as column names) ──────
+            # ── Format 2: Transposed study format (genes as row index) ─────────
             # Detect: if column names look like gene symbols (short, uppercase-able)
             gene_like_cols = [
                 c for c in mut.columns
@@ -108,7 +128,7 @@ class PedcBioPortalValidator:
                     "Parsing as sample×gene matrix.",
                     ', '.join(gene_like_cols[:5])
                 )
-                return self._parse_transposed_format(mut)
+                return self._parse_transposed_format(mut_path)
 
             # ── Neither format matched ─────────────────────────────────────────
             logger.warning(
@@ -116,7 +136,7 @@ class PedcBioPortalValidator:
                 "  Found columns: %s\n"
                 "  Expected either:\n"
                 "    Standard format: hugo_symbol, hgvsp_short, tumor_sample_barcode\n"
-                "    Transposed format: gene names as column headers (e.g. H3-3A, CDK4)\n"
+                "    Transposed format: gene names as row index (e.g. H3-3A, CDKN2A)\n"
                 "  Genomic validation will be skipped. This is non-fatal — the pipeline\n"
                 "  will run without CBTN co-occurrence statistics.",
                 mut.columns.tolist()
@@ -136,36 +156,54 @@ class PedcBioPortalValidator:
 
         return self._load_cna_and_rna(h3k27m_samples)
 
-    def _parse_transposed_format(self, mut) -> Dict:
+    def _parse_transposed_format(self, mut_path: Path) -> Dict:
         """
-        Parse transposed format where gene names are column headers.
-        Rows = samples, columns = gene names/mutations.
+        Parse transposed format (PNOC/PBTA cBioPortal export) where:
+          - First column = gene names (H3-3A, CDKN2A, etc.) → becomes row index
+          - Remaining columns = sample IDs
+          - Cell values = mutation calls (K28M, WT, NP, G35R, etc.)
+
+        This is the format produced by cBioPortal "Transposed Matrix" download.
+        Row 0 = STUDY_ID, Row 1 = SAMPLE_ID are metadata rows that get skipped
+        when index_col=0 is used — pandas treats first column as index automatically.
         """
-        # Look for H3K27M column
-        h3_col = next(
-            (c for c in mut.columns
-             if c.upper().replace('-', '').replace('_', '') in {'H33A', 'H3F3A', 'HIST1H3B'}),
-            None
-        )
-        sample_col = next(
-            (c for c in mut.columns if c in ['sample_id', 'study_id', 'patient_id', 'id']),
+        # Re-read with index_col=0 so gene names are the row index
+        raw = pd.read_csv(mut_path, sep='\t', index_col=0)
+
+        # Normalize index to uppercase for robust matching
+        raw.index = raw.index.astype(str).str.upper().str.strip()
+
+        # Find the H3-3A row (gene encoding histone H3.3, mutated in DIPG)
+        H3_ALIASES = {'H3-3A', 'H3F3A', 'HIST1H3B', 'H33A', 'H3.3A'}
+        h3_row = next(
+            (idx for idx in raw.index if idx in H3_ALIASES),
             None
         )
 
-        if h3_col and sample_col:
-            # Samples where H3K27M is marked (typically 1, True, 'K27M', etc.)
-            h3k27m_mask = mut[h3_col].astype(str).str.contains(
-                'K27M|K28M|1|True|yes', case=False, na=False
+        if h3_row is None:
+            logger.warning(
+                "Transposed format detected but could not find H3K27M column or sample ID column. "
+                "Skipping genomic validation.\n"
+                "  Gene rows found: %s",
+                raw.index.tolist()[:10]
             )
-            h3k27m_samples = set(mut[h3k27m_mask][sample_col].astype(str))
-            logger.info("Transposed format: found %d H3K27M samples", len(h3k27m_samples))
-            return self._load_cna_and_rna(h3k27m_samples)
+            return {}
 
-        logger.warning(
-            "Transposed format detected but could not find H3K27M column or sample ID column. "
-            "Skipping genomic validation."
+        # Get mutation values for H3-3A across all samples
+        h3_values = raw.loc[h3_row].astype(str).str.upper().str.strip()
+
+        # K28M = H3K27M in updated HGVS nomenclature (1-indexed vs 0-indexed)
+        # K27M = older nomenclature (also valid)
+        # EXCLUDE G35R, G35V — these are H3.3 mutations but NOT H3K27M
+        H3K27M_VALUES = {'K28M', 'K27M'}
+        h3k27m_samples = set(raw.columns[h3_values.isin(H3K27M_VALUES)])
+
+        logger.info(
+            "Transposed format: found %d H3K27M (K28M) samples out of %d total",
+            len(h3k27m_samples), len(raw.columns)
         )
-        return {}
+
+        return self._load_cna_and_rna(h3k27m_samples)
 
     def _load_cna_and_rna(self, h3k27m_samples: Set) -> Dict:
         """Load CNA and RNA data and compute co-occurrence statistics."""
@@ -179,21 +217,45 @@ class PedcBioPortalValidator:
 
             if cna_path.exists():
                 cna = pd.read_csv(cna_path, sep='\t', index_col=0)
+                # Normalize index
+                cna.index = cna.index.astype(str).str.upper().str.strip()
                 total_samples = len(cna.columns)
+
                 cdkn2a_idx = next(
-                    (idx for idx in cna.index if str(idx).upper() == 'CDKN2A'), None
+                    (idx for idx in cna.index if idx == 'CDKN2A'), None
                 )
                 if cdkn2a_idx:
-                    cdkn2a_del_samples = set(cna.columns[cna.loc[cdkn2a_idx] == -2])
+                    # Deep deletion = -2, hemizygous = -1
+                    # Use -2 for strict CDKN2A homozygous deletion
+                    cdkn2a_row = pd.to_numeric(cna.loc[cdkn2a_idx], errors='coerce')
+                    cdkn2a_del_samples = set(cna.columns[cdkn2a_row <= -1])
+                    logger.info(
+                        "CDKN2A: %d samples with deletion (score ≤ -1), "
+                        "%d with deep deletion (score = -2)",
+                        len(cdkn2a_del_samples),
+                        len(cna.columns[cdkn2a_row == -2])
+                    )
 
             if rna_path.exists():
                 rna = pd.read_csv(rna_path, sep='\t', index_col=0)
                 overlap_rna = list(h3k27m_samples.intersection(rna.columns))
                 if overlap_rna:
-                    high_exp = rna[overlap_rna].mean(axis=1)
+                    high_exp = rna[overlap_rna].apply(
+                        pd.to_numeric, errors='coerce'
+                    ).mean(axis=1)
                     upregulated_genes = set(high_exp[high_exp > 2.0].index)
+                    logger.info(
+                        "RNA: %d genes upregulated (z-score > 2.0) in H3K27M samples",
+                        len(upregulated_genes)
+                    )
 
             overlap = h3k27m_samples.intersection(cdkn2a_del_samples)
+
+            logger.info(
+                "Co-occurrence: H3K27M=%d, CDKN2A-del=%d, overlap=%d, total=%d",
+                len(h3k27m_samples), len(cdkn2a_del_samples),
+                len(overlap), total_samples
+            )
 
             return {
                 "h3k27m_count":      len(h3k27m_samples),
@@ -219,6 +281,7 @@ class ProductionPipeline:
         self._hyp_gen           = HypothesisGenerator()
         self._genomic_validator = PedcBioPortalValidator()
         self._stat_validator    = StatisticalValidator()
+        self._bbb_filter        = BBBFilter()
 
     async def initialize(self, disease: str):
         return True
@@ -238,7 +301,7 @@ class ProductionPipeline:
         # Genomic validation (handles missing files gracefully)
         genomic_stats = self._genomic_validator.validate_triple_combo_cohort()
 
-        # p-value (now returns None/nan instead of 1.0 when data absent)
+        # p-value (returns None/nan instead of 1.0 when data absent)
         p_val = self._stat_validator.calculate_cooccurrence_p_value(genomic_stats)
 
         upregulated = genomic_stats.get("upregulated_genes", set())
@@ -266,6 +329,10 @@ class ProductionPipeline:
             e_score = c.get("escape_bypass_score", 0.4)
             c["score"] = (t_score * 0.40) + (d_score * 0.30) + (e_score * 0.20) + (p_score * 0.10)
 
+        # BBB filter — penalises known GBM clinical failures (e.g. Cilengitide)
+        # to 10% of their score BEFORE sorting, so they never appear in top results
+        candidates, _ = self._bbb_filter.filter_and_rank(candidates, apply_penalty=True)
+
         sorted_candidates = sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)
 
         hypotheses = self._hyp_gen.generate(
@@ -280,8 +347,8 @@ class ProductionPipeline:
         return {
             "hypotheses": hypotheses,
             "stats": {
-                "p_value":       p_val,
-                "p_value_label": self._stat_validator.format_p_value_for_report(p_val),
+                "p_value":            p_val,
+                "p_value_label":      self._stat_validator.format_p_value_for_report(p_val),
                 "genomic_data_loaded": bool(genomic_stats),
             },
         }

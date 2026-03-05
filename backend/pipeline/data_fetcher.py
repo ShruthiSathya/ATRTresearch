@@ -137,7 +137,7 @@ class ProductionDataFetcher:
         """
         logger.info("💊 Fetching dynamic drug library from OpenTargets API...")
 
-        efo_ids = ["EFO_0000519", "EFO_0000250", "EFO_0000618"]
+        efo_ids = ["EFO_0000519", "EFO_0001422", "EFO_0000618"]
         drugs_dict: Dict[str, Dict] = {}
 
         query = """

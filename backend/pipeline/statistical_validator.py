@@ -160,7 +160,7 @@ class StatisticalValidator:
         # ── Step 4: Run Fisher's exact test ───────────────────────────────────
         try:
             table = [[a, b], [c, d]]
-            _, p_value = fisher_exact(table, alternative="greater")
+            _, p_value = fisher_exact(table, alternative="two-sided")
 
             if math.isnan(p_value) or math.isinf(p_value):
                 logger.warning("Fisher's exact returned nan/inf — treating as insufficient data")
