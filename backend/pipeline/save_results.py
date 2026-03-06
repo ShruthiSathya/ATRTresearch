@@ -162,23 +162,10 @@ async def main(disease: str, top_n: int, output_path: Path) -> None:
     # Debug: print all keys so we know the exact structure
     logger.info(f"\n── pipeline.run() returned keys: {list(raw.keys())}")
 
-    # pipeline.run() only returns hypotheses + stats.
-    # Per-drug scores live on internal pipeline attributes after run() completes.
-    # Try every known internal attribute name.
-    candidates = []
-    for attr in ("_scored_candidates", "_candidates", "_ranked_candidates",
-                 "_top_candidates", "_filtered_candidates", "_drug_scores",
-                 "_all_candidates", "_results", "_drug_list"):
-        val = getattr(pipeline, attr, None)
-        if val:
-            candidates = list(val)
-            logger.info(f"── found candidates on pipeline.{attr}: {len(candidates)}")
-            break
-
-    # Log all pipeline attributes so we can find the right one
-    if not candidates:
-        attrs = [a for a in dir(pipeline) if not a.startswith("__")]
-        logger.info(f"── pipeline attributes: {attrs}")
+    # pipeline.run() now returns top_candidates directly (fixed in discovery_pipeline.py)
+    candidates = raw.get("top_candidates", [])
+    if candidates:
+        logger.info(f"── found {len(candidates)} candidates in top_candidates")
 
     if not candidates:
         # Parse per-drug scores from confidence_explanation text.
