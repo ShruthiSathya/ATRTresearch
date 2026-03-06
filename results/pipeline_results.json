@@ -1,11 +1,11 @@
 {
-  "run_timestamp": "2026-03-05T20:24:02.548891",
+  "run_timestamp": "2026-03-05T22:44:58.913757",
   "disease": "dipg",
   "stats": {
     "p_value": 0.0001157169526793886,
     "p_value_label": "1.16e-04 \u2705 (significant)",
     "n_drugs_screened": 3,
-    "n_dipg_samples": 0,
+    "n_dipg_samples": 184,
     "dipg_specialised": true,
     "novel_count": 0,
     "combinations_found": 0,
@@ -122,7 +122,7 @@
       "supporting_streams": [
         "Multi-Omic Integration"
       ],
-      "target_context": "Multi-node blockade targeting CDK6 / CDK4 / PSMA2 / PSMB3 / PSMA7",
+      "target_context": "Multi-node blockade targeting CDK6 / CDK4 / PSMB11 / PSMA6 / PSMB5",
       "mechanism_narrative": "Computationally derived synergistic combination. Selected for mechanism diversity, network proximity, and stem-cell eradication.",
       "statistical_significance": "1.16e-04 \u2705",
       "statistical_note": "Fisher's exact test for H3K27M/CDKN2A-del co-occurrence.",
