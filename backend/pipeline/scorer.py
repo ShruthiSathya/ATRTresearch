@@ -1,30 +1,3 @@
-"""
-scorer.py — Evidence Stream Scorer (v3.0)
-==========================================
-CHANGES FROM v2.0 → v3.0
---------------------------
-REMOVED:
-  - composite_score() function — was a weighted sum, now replaced by
-    hypothesis_generator.py which does proper multi-evidence integration
-  - The idea that a single float summarises a drug candidate
-
-KEPT:
-  - PATHWAY_WEIGHTS dict (still used by pathway scoring)
-  - score_gene_overlap() — feeds into evidence chain as one signal
-  - score_pathway_overlap() — feeds into evidence chain as one signal
-  - sensitivity_analysis() — still valid for methods section
-  - DrugScorer class — now produces component scores, not composite
-  - WEIGHT_* constants — exported for other modules
-
-THE CRITICAL CHANGE:
-  DrugScorer.score() no longer produces a "score" field that ranks drugs.
-  It produces COMPONENT scores that feed into hypothesis_generator.py.
-  The hypothesis generator decides what to do with them — not this file.
-
-  Old: score = 0.40*gene + 0.30*pathway + 0.20*bbb + 0.10*lit  → rank drugs
-  New: score_components = {gene, pathway, bbb, lit, ppi, cmap, depmap}
-       → hypothesis_generator combines these with evidence grading
-"""
 
 import logging
 import re

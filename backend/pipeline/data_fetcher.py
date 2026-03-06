@@ -1,35 +1,3 @@
-"""
-data_fetcher.py — Production Data Fetcher (v5.2)
-=================================================
-FIXES v5.2
-----------
-BUG: "API Request failed: 'NoneType' object has no attribute 'get'"
-
-Root cause: The OpenTargets GraphQL API returns a valid HTTP 200 response
-even when the query fails internally. In those cases the response body is:
-    {"errors": [...], "data": None}   ← data is None, not {}
-
-The old code did:
-    kd = data.get('data', {}).get('disease', {}).get('knownDrugs')
-                                      ^^^
-When data['data'] is None (not missing), .get('disease', {}) raises:
-    AttributeError: 'NoneType' object has no attribute 'get'
-
-FIXES:
-  1. Null-safe chain: check each level for None before chaining .get()
-  2. Log the actual GraphQL error message (was silently swallowed)
-  3. Add explicit resp.content_type check — if response isn't JSON, log it
-  4. Retry logic: up to 3 retries on transient 5xx errors (rate limits etc)
-  5. If ALL API pages fail for a disease EFO, log clearly and skip it
-     rather than silently returning partial results
-
-Additionally fixed:
-  - Missing genomic columns warning: the columns warning in discovery_pipeline.py
-    fires because mutations.txt uses 'drd2','hdac1' etc. (lowercase gene names
-    as column names — this is a DIPG-specific study format, not hugo_symbol).
-    The validator now auto-detects this and maps accordingly.
-"""
-
 import asyncio
 import aiohttp
 import logging

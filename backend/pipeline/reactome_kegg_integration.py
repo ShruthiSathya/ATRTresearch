@@ -1,38 +1,4 @@
-"""
-Reactome + KEGG Pathway Integration Module
-==========================================
-Replaces the hand-curated gene→pathway map with live queries to Reactome
-and KEGG APIs.
 
-This addresses reviewer concern: "the pathway map is hand-curated by you.
-Reviewers may ask that you replace or supplement it with Reactome or KEGG
-annotations to reduce subjectivity."
-
-Architecture
-------------
-  1. ReactomePathwayFetcher  — queries the Reactome Content Service REST API
-  2. KEGGPathwayFetcher       — queries the KEGG REST API (KEGG/gene endpoint)
-  3. HybridPathwayMapper      — merges Reactome + KEGG, falls back to the
-                                curated map for any gene not in either DB
-  4. PathwayCache             — simple disk-backed cache (avoids re-fetching
-                                on each validation run)
-
-Methods citation (insert in paper)
------------------------------------
-  "Pathway annotations were retrieved from the Reactome Content Service
-   (v88, https://reactome.org; Jassal et al. 2020, Nucleic Acids Res)
-   and KEGG PATHWAY (https://www.genome.jp/kegg; Kanehisa et al. 2023,
-   Nucleic Acids Res). For genes not covered by either database, annotations
-   from the curated pathway map (Supplementary Table S1) were used as fallback."
-
-References
-----------
-  Jassal B, et al. (2020) The reactome pathway knowledgebase. Nucleic Acids Res.
-    doi:10.1093/nar/gkz1031
-
-  Kanehisa M, et al. (2023) KEGG for taxonomy-based analysis of pathways and
-    genomes. Nucleic Acids Res. doi:10.1093/nar/gkac963
-"""
 
 import asyncio
 import aiohttp

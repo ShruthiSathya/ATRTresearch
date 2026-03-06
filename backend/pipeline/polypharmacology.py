@@ -1,33 +1,3 @@
-"""
-polypharmacology.py — Multi-Target Polypharmacology Scoring
-============================================================
-Scores drug candidates for their multi-target polypharmacology profiles,
-including synergistic target combinations and resistance pathway coverage.
-
-FIXES v3.0
------------
-FIX 1 (CRITICAL — was crashing at runtime):
-  score_batch() signature was: score_batch(self, candidates, disease_targets=None)
-  but run_dipg_pipeline.py called it as:
-      scorer.score_batch(candidates, disease_targets=disease_genes)
-  Looking at the original implementation, score_batch only accepted
-  `candidates: List[Dict]` — no disease_targets parameter existed.
-  This raised TypeError at runtime.
-  Fix: added disease_targets parameter properly — it's used to compute
-  context-specific target overlap scores.
-
-FIX 2 (score inflation):
-  _selectivity_score() was returning values in range 0.6–0.9 regardless
-  of actual selectivity. The composite formula added this directly, so
-  poly_score rarely approached 0 — every drug got a systematic boost.
-  Fix: rescaled to true 0–1 range. A highly selective drug (1 target) now
-  scores 1.0; a promiscuous drug (10+ targets) scores near 0.
-
-FIX 3 (architecture):
-  Removed final composite score output. Like scorer.py (v3.0),
-  polypharmacology now produces component signals that feed into
-  hypothesis_generator.py, not a final ranking score.
-"""
 
 import logging
 import math

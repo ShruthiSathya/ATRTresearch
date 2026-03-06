@@ -1,25 +1,3 @@
-"""
-depmap_essentiality.py — DepMap CRISPR Essentiality (v5.2)
-===========================================================
-FIX v5.2 — Only 67 cell lines loaded (should be ~300+ GBM lines)
-
-Root cause: The OncotreeSubtype filter used a case-sensitive regex and
-only matched exact strings 'Glioblastoma' and 'Diffuse Midline Glioma'.
-The actual values in Model.csv include:
-  "Glioblastoma Multiforme (GBM)"
-  "Glioblastoma"
-  "Diffuse Intrinsic Pontine Glioma"    ← missed
-  "Diffuse Midline Glioma, H3 K27M"     ← partially matched
-  "High Grade Glioma NOS"               ← missed entirely
-  "Pediatric GBM"                        ← missed
-  "Anaplastic Glioma"                    ← missed
-
-FIXES:
-  1. Use a broader case-insensitive term list
-  2. Fall back to OncotreeLineage ('CNS/Brain') if subtype filter returns < 20 lines
-  3. Log exactly how many lines matched each filter so you can see this in output
-  4. Report the actual cell line IDs used so results are reproducible
-"""
 
 import asyncio
 import logging

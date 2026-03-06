@@ -1,26 +1,3 @@
-"""
-generate_figures.py — Generate all figures from saved pipeline results
-=======================================================================
-Reads results/pipeline_results.json (written by save_results.py) and
-produces four figures. Every number comes from your actual pipeline run —
-nothing is hardcoded.
-
-Usage:
-    python save_results.py          # run pipeline first
-    python generate_figures.py      # then generate figures
-
-Output:
-    figures/fig1_cooccurrence.png    — H3K27M / CDKN2A mutual exclusivity
-    figures/fig2_drug_rankings.png   — top N drugs, stacked component scores
-    figures/fig3_score_scatter.png   — DepMap vs tissue scatter, BBB colour
-    figures/fig4_confidence.png      — top hypothesis confidence breakdown
-
-Add to README.md:
-    ![Figure 1](figures/fig1_cooccurrence.png)
-    ![Figure 2](figures/fig2_drug_rankings.png)
-    ![Figure 3](figures/fig3_score_scatter.png)
-    ![Figure 4](figures/fig4_confidence.png)
-"""
 
 import json
 import math

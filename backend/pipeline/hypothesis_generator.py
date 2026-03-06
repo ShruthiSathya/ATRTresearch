@@ -1,39 +1,3 @@
-"""
-hypothesis_generator.py — Hypothesis Generator (v5.2)
-======================================================
-FIXES v5.2
-----------
-FIX 1 — Self-referential confidence score:
-  OLD: confidence = sum(c.get('score', 0) for c in top_3) / 3.0
-  This is tautological — confidence is just the pipeline's own score averaged.
-  A reviewer will correctly flag: "you're using your model's output to measure
-  your model's confidence — this is circular."
-
-  NEW: Three externally-grounded component scores:
-    a) depmap_component   — from Broad Institute CRISPR data (external)
-       Uses actual Chronos scores: how lethal is knockout in GBM cell lines?
-    b) bbb_component      — from curated pharmacokinetic literature (external)
-       Does the drug physically reach the tumor (HIGH/MODERATE/LOW/UNKNOWN)?
-    c) diversity_component — are the three drugs mechanistically independent?
-       Based on actual target overlap (computed, but not circular with the score)
-
-  The final confidence is their weighted mean, and we REPORT each component
-  in the hypothesis so reviewers can see exactly what drove the number.
-
-FIX 2 — p-value handling:
-  HypothesisGenerator now correctly handles p_value=None (no genomic data)
-  and p_value=nan (insufficient counts) from the fixed StatisticalValidator.
-  Priority is set to 'COMPUTATIONAL' when no genomic data is available,
-  which is honest — the finding is computationally derived, not statistically
-  validated against patient cohort data.
-
-FIX 3 — DepMap coverage (67 cell lines):
-  The DepMapEssentiality module filtered on 'OncotreeSubtype' with a
-  case-sensitive regex. Fixed in depmap_essentiality.py (see that file).
-  HypothesisGenerator now reports actual depmap_score in confidence breakdown
-  so you can see when DepMap data is absent (score=0.5 default).
-"""
-
 import logging
 import math
 from typing import Dict, List, Optional

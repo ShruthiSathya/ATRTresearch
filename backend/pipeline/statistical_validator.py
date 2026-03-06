@@ -1,32 +1,3 @@
-"""
-statistical_validator.py — Statistical Validation Module (v4.2)
-================================================================
-FIXES v4.2
-----------
-BUG (root cause of p=1.0):
-  When PedcBioPortalValidator.validate_triple_combo_cohort() cannot find
-  the genomic files OR the required columns, it returns an empty dict {}.
-  calculate_cooccurrence_p_value() then calls genomic_stats.get(..., 0)
-  on all fields, getting:
-      a=0, b=0, c=0, d=1000
-  Fisher's exact on [[0,0],[0,1000]] always returns p=1.0 — correct
-  mathematically, but meaningless. The pipeline was silently running
-  WITHOUT genomic validation data and reporting it as a valid result.
-
-FIXES:
-  1. Detect the "no data" case (all counts zero) and raise a clear
-     DataUnavailableError instead of silently returning p=1.0.
-  2. Add a minimum cell count guard (all cells ≥ 5) before running
-     Fisher's exact — small cell counts produce unreliable p-values.
-  3. Distinguish between three outcomes:
-       - p_value  : valid Fisher's exact p-value (data available)
-       - p_value = None : data unavailable (files not found / columns missing)
-       - p_value = NaN  : data present but insufficient counts for the test
-  4. Report the data-unavailable case in the hypothesis as "p = N/A
-     (genomic validation data not loaded)" rather than "p = 1.00e+00".
-  5. Add a validate_input() method that checks whether the genomic stats
-     dict is actually populated before computing statistics.
-"""
 
 import logging
 import math

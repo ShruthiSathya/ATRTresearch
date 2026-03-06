@@ -1,34 +1,6 @@
 """
 trial_outcome_calibrator.py — Empirically Calibrated Trial Outcome Prediction
 ===============================================================================
-Replaces insilico_trial.py entirely.
-
-THE PROBLEM WITH insilico_trial.py
-------------------------------------
-The old formula:
-    predicted_orr = baseline_orr + (max_orr - baseline_orr) * composite_score
-
-This is tautological. High composite score → high ORR *by construction*.
-It produces precise-looking numbers (e.g. "predicted ORR: 23.4%") that are
-essentially invented. Any reviewer will correctly flag this.
-
-WHAT THIS MODULE DOES INSTEAD
---------------------------------
-1. Loads a training set of 58 real GBM Phase 2 trials with published outcomes
-   (ORR, PFS-6, OS-12) from ClinicalTrials.gov + published literature.
-
-2. For each trial drug, computes pipeline feature scores using this pipeline.
-
-3. Trains a calibrated logistic regression: pipeline features → P(trial success).
-   "Trial success" = ORR ≥ 10% OR PFS-6 ≥ 20% (standard GBM trial endpoints).
-
-4. Calibrates predictions using Platt scaling (score_calibrator.py).
-
-5. Now when we say "P(phase 2 success) = 0.34", it means:
-   Among drugs with this pipeline profile, 34% achieved ≥10% ORR in GBM trials.
-
-This is still approximate — but it's calibrated against reality, not circular.
-
 TRAINING DATA
 --------------
 58 GBM Phase 2 trials, 2005–2023. Sources:
