@@ -2,7 +2,7 @@
 GBM/DIPG Drug Repurposing Pipeline — save_results.py
   disease  : dipg
   top_n    : 20
-  timestamp: 2026-03-07 18:22:04
+  timestamp: 2026-03-07 20:42:40
 =================================================================
 ✅ CMAP Query Engine Initialized (Real Data Mode)
 ✅ PPI Network Module Initialized (Live STRING-DB + Curated Fallback)
@@ -31,7 +31,7 @@ Loading CRISPRGeneEffect.csv (this is large — may take 30-60s)...
 DepMap cell line matching: 72 found in Model.csv, 52 present in CRISPRGeneEffect.csv
 ✅ DepMap loaded: 52 cell lines, 18435 gene scores computed
 ✅ PPI scoring: 557 candidates | distribution: {1.0: 33, 0.85: 28, 0.6: 6, 0.2: 490}
-BBB filter: penalised 14 known GBM clinical trial failures
+BBB filter: penalised 19 known GBM clinical trial failures
 
 ── pipeline.run() returned keys: ['hypotheses', 'top_candidates', 'stats']
 ── found 20 candidates in top_candidates
@@ -51,8 +51,8 @@ Next step: python generate_figures.py
 
 ── Top 5 candidates ────────────────────────────────
   Drug                       Score  BBB       
-  BIRABRESIB                 0.871  UNKNOWN   
-  BELINOSTAT                 0.867  UNKNOWN   
+  BIRABRESIB                 0.871  MODERATE  
   PANOBINOSTAT               0.867  HIGH      
-  ROMIDEPSIN                 0.867  UNKNOWN   
-  ONATASERTIB                0.827  UNKNOWN   
+  ONATASERTIB                0.827  MODERATE  
+  AZD-8055                   0.827  UNKNOWN   
+  CC-115                     0.812  UNKNOWN   
