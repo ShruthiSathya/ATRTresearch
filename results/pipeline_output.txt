@@ -2,7 +2,7 @@
 GBM/DIPG Drug Repurposing Pipeline — save_results.py
   disease  : dipg
   top_n    : 20
-  timestamp: 2026-03-07 20:42:40
+  timestamp: 2026-03-07 22:41:41
 =================================================================
 ✅ CMAP Query Engine Initialized (Real Data Mode)
 ✅ PPI Network Module Initialized (Live STRING-DB + Curated Fallback)
@@ -39,8 +39,9 @@ BBB filter: penalised 19 known GBM clinical trial failures
 
 ✅ Results saved to : results/pipeline_results.json
 ✅ Log saved to     : results/pipeline_output.txt
+✅ n_drugs_screened : 557
 
-Next step: python generate_figures.py
+Next step: python -m backend.pipeline.generate_figures
 
 ── Contingency table ──────────────────────────────
   H3K27M+/CDKN2A-del : 14
@@ -56,3 +57,5 @@ Next step: python generate_figures.py
   ONATASERTIB                0.827  MODERATE  
   AZD-8055                   0.827  UNKNOWN   
   CC-115                     0.812  UNKNOWN   
+
+  Total drugs screened (OpenTargets): 557

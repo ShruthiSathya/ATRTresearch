@@ -1,4 +1,3 @@
-
 import json
 import math
 import sys
@@ -10,12 +9,10 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
 RESULTS_FILE = Path("results/pipeline_results.json")
 FIGURES_DIR  = Path("figures")
 FIGURES_DIR.mkdir(exist_ok=True)
 
-# ── Palette ───────────────────────────────────────────────────────────────────
 UCLA_BLUE    = "#2774AE"
 UCLA_GOLD    = "#FFD100"
 DARK_GREY    = "#2C2C2C"
@@ -41,14 +38,10 @@ BBB_COLORS = {
 }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Load
-# ─────────────────────────────────────────────────────────────────────────────
-
 def load() -> dict:
     if not RESULTS_FILE.exists():
         print(f"ERROR: {RESULTS_FILE} not found.")
-        print("Run 'python save_results.py' first.")
+        print("Run 'python -m backend.pipeline.save_results' first.")
         sys.exit(1)
     with open(RESULTS_FILE) as f:
         data = json.load(f)
@@ -68,28 +61,27 @@ def load() -> dict:
 def fig1_cooccurrence(data: dict) -> None:
     ct = data.get("contingency_table")
     if not ct:
-        print("  fig1 skipped — no contingency_table in results "
-              "(genomic data may not have loaded)")
+        print("  fig1 skipped — no contingency_table in results")
         return
 
-    a = ct["h3k27m_pos_cdkn2a_del"]   # double-hit
-    b = ct["h3k27m_pos_cdkn2a_wt"]    # H3K27M only
-    c = ct["h3k27m_neg_cdkn2a_del"]   # CDKN2A-del only
-    d = ct["h3k27m_neg_cdkn2a_wt"]    # neither
+    a = ct["h3k27m_pos_cdkn2a_del"]
+    b = ct["h3k27m_pos_cdkn2a_wt"]
+    c = ct["h3k27m_neg_cdkn2a_del"]
+    d = ct["h3k27m_neg_cdkn2a_wt"]
     n    = ct["total"]
     h3n  = ct["h3k27m_count"]
     cdn  = ct["cdkn2a_del_count"]
     pval = ct.get("p_value")
     plbl = ct.get("p_value_label") or (f"{pval:.2e}" if pval else "N/A")
+    plbl_clean = plbl.replace("✅", "").strip()
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5.5))
     fig.suptitle(
         f"H3K27M Mutation vs CDKN2A Deletion — Mutual Exclusivity in DIPG\n"
-        f"PNOC/PBTA Cohort  •  n = {n}  •  Fisher's exact  p = {plbl}",
+        f"PNOC/PBTA Cohort  •  n = {n}  •  Fisher's exact  p = {plbl_clean}",
         fontsize=13, fontweight="bold", y=1.02,
     )
 
-    # ── left: heatmap ─────────────────────────────────────────────────────────
     ax   = axes[0]
     tbl  = np.array([[a, b], [c, d]])
     vmax = max(n // 2, 1)
@@ -98,7 +90,7 @@ def fig1_cooccurrence(data: dict) -> None:
     ax.set_xticks([0, 1])
     ax.set_yticks([0, 1])
     ax.set_xticklabels([f"CDKN2A deleted\n(n={cdn})", f"CDKN2A WT\n(n={n-cdn})"], fontsize=11)
-    ax.set_yticklabels([f"H3K27M+\n(n={h3n})", f"H3K27M−\n(n={n-h3n})"], fontsize=11)
+    ax.set_yticklabels([f"H3K27M+\n(n={h3n})", f"H3K27M-\n(n={n-h3n})"], fontsize=11)
     ax.set_xlabel("CDKN2A Status", fontsize=12, labelpad=8)
     ax.set_ylabel("H3K27M Status", fontsize=12, labelpad=8)
     ax.set_title("Contingency Table", fontsize=12, fontweight="bold")
@@ -114,12 +106,11 @@ def fig1_cooccurrence(data: dict) -> None:
 
     if pval is not None and not (isinstance(pval, float) and math.isnan(pval)):
         ax.text(0.5, -0.24,
-                f"p = {plbl}  (two-sided Fisher's exact)\n"
+                f"p = {plbl_clean}  (two-sided Fisher's exact)\n"
                 "Mutual exclusivity — alternative oncogenic mechanisms",
                 ha="center", transform=ax.transAxes,
                 fontsize=10, color=RED_ACCENT, style="italic")
 
-    # ── right: subgroup bar chart ─────────────────────────────────────────────
     ax2 = axes[1]
     counts     = [b, a, c, d]
     labels     = [
@@ -143,7 +134,7 @@ def fig1_cooccurrence(data: dict) -> None:
         if cnt > ymax * 0.12:
             tc = "white" if bar_colors[i] != LIGHT_GREY else DARK_GREY
             ax2.text(bar.get_x() + bar.get_width() / 2,
-                     cnt / 2, f"→ {drug}",
+                     cnt / 2, f"-> {drug}",
                      ha="center", va="center",
                      fontsize=8.5, color=tc, fontweight="bold",
                      multialignment="center")
@@ -151,7 +142,7 @@ def fig1_cooccurrence(data: dict) -> None:
     ax2.set_xticks(range(4))
     ax2.set_xticklabels(labels, fontsize=9.5)
     ax2.set_ylabel("Number of samples", fontsize=12)
-    ax2.set_title("Molecular Subgroups → Drug Stratification",
+    ax2.set_title("Molecular Subgroups -> Drug Stratification",
                   fontsize=12, fontweight="bold")
     ax2.set_ylim(0, ymax * 1.2)
 
@@ -186,7 +177,10 @@ def fig2_drug_rankings(data: dict, top_n: int = 12) -> None:
     h3k27m     = [c.get("h3k27m_relevant", False) for c in top]
 
     stats    = data.get("stats", {})
-    n_screen = stats.get("n_drugs_screened", "?")
+    # ── FIX v5.3: n_drugs_screened is now the real OpenTargets count ──────────
+    # Set by discovery_pipeline.py as len(sorted_candidates) before [:top_k].
+    # Previously this was always == top_k (20) which was wrong.
+    n_screen = stats.get("n_drugs_screened", len(candidates))
     plbl     = stats.get("p_value_label", "")
 
     fig, ax = plt.subplots(figsize=(max(12, len(drugs) * 1.1), 6.5))
@@ -201,7 +195,6 @@ def fig2_drug_rankings(data: dict, top_n: int = 12) -> None:
                label=label, color=color, alpha=0.85,
                edgecolor="white", linewidth=0.4)
 
-    # Composite line on twin axis
     ax2 = ax.twinx()
     ax2.plot(x, composite, "o-", color=RED_ACCENT,
              linewidth=2.5, markersize=8, label="Composite score", zorder=5)
@@ -211,20 +204,18 @@ def fig2_drug_rankings(data: dict, top_n: int = 12) -> None:
     ax2.spines["right"].set_color(RED_ACCENT)
     ax2.spines["top"].set_visible(False)
 
-    # Per-bar annotations: BBB, failure, H3K27M
     for i in range(len(drugs)):
         markers = []
         if failed[i]:
-            markers.append(("✗", RED_ACCENT))
+            markers.append(("X", RED_ACCENT))
         if bbb_status[i] == "HIGH":
-            markers.append(("●", GREEN_ACCENT))
+            markers.append(("*", GREEN_ACCENT))
         if h3k27m[i]:
             markers.append(("H", UCLA_BLUE))
         for j, (m, mc) in enumerate(markers):
             ax2.text(i, composite[i] + 0.04 + j * 0.07, m,
                      ha="center", fontsize=9, color=mc, fontweight="bold")
 
-    # Annotate top hypothesis
     cb = data.get("confidence_breakdown")
     if cb and composite:
         combo = cb.get("drug_combo", "")
@@ -242,8 +233,8 @@ def fig2_drug_rankings(data: dict, top_n: int = 12) -> None:
     h1, l1 = ax.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
     extra  = [
-        mpatches.Patch(color=GREEN_ACCENT, label="● HIGH BBB penetrance"),
-        mpatches.Patch(color=RED_ACCENT,   label="✗ Known GBM failure (penalised)"),
+        mpatches.Patch(color=GREEN_ACCENT, label="* HIGH BBB penetrance"),
+        mpatches.Patch(color=RED_ACCENT,   label="X Known GBM failure (penalised)"),
         mpatches.Patch(color=UCLA_BLUE,    label="H H3K27M-relevant"),
     ]
     ax.legend(h1 + h2 + extra, l1 + l2 + [p.get_label() for p in extra],
@@ -252,11 +243,16 @@ def fig2_drug_rankings(data: dict, top_n: int = 12) -> None:
     ax.set_xticks(x)
     ax.set_xticklabels(drugs, rotation=30, ha="right", fontsize=11)
     ax.set_ylabel("Weighted component score", fontsize=12)
+    # ── FIX v5.3: title shows real screened count ─────────────────────────────
+    # Strip the checkmark emoji from p_value_label — DejaVu Sans can't render it
+    # and it causes a UserWarning. The label already contains "(significant)".
+    plbl_clean = plbl.replace("✅", "").strip()
     ax.set_title(
         f"Top {len(drugs)} Drug Candidates — Multi-Omic Composite Scoring\n"
-        f"{n_screen} drugs screened  •  p = {plbl}",
+        f"{n_screen} drugs screened  •  p = {plbl_clean}",
         fontsize=12, fontweight="bold",
     )
+
     max_stacked = max(
         sum(comps[k][i] for k in comps) for i in range(len(drugs))
     ) if drugs else 0.6
@@ -280,16 +276,14 @@ def fig3_score_scatter(data: dict) -> None:
         return
 
     fig, axes = plt.subplots(1, 3, figsize=(16, 5.5))
-    fig.suptitle("Score Component Relationships — All Screened Candidates",
-                 fontsize=13, fontweight="bold")
+    n_shown = len(candidates)
+    n_total = data.get("stats", {}).get("n_drugs_screened", n_shown)
+    fig.suptitle(f"Score Component Relationships — Top {n_shown} of {n_total} Screened Candidates", fontsize=13, fontweight="bold")
 
     pairs = [
-        ("depmap_score",        "tissue_expression_score",
-         "DepMap CRISPR",       "Single-cell GSC"),
-        ("ppi_score",           "escape_bypass_score",
-         "PPI Network",         "Escape Bypass"),
-        ("depmap_score",        "score",
-         "DepMap CRISPR",       "Composite Score"),
+        ("depmap_score", "tissue_expression_score", "DepMap CRISPR",  "Single-cell GSC"),
+        ("ppi_score",    "escape_bypass_score",      "PPI Network",    "Escape Bypass"),
+        ("depmap_score", "score",                    "DepMap CRISPR",  "Composite Score"),
     ]
 
     for ax, (xkey, ykey, xlabel, ylabel) in zip(axes, pairs):
@@ -302,7 +296,6 @@ def fig3_score_scatter(data: dict) -> None:
         ax.scatter(xs, ys, c=colors, s=65, alpha=0.75,
                    edgecolors=DARK_GREY, linewidths=0.4, zorder=3)
 
-        # Label top 5 by composite score
         top5 = sorted(range(len(candidates)),
                       key=lambda i: candidates[i].get("score", 0),
                       reverse=True)[:5]
@@ -311,10 +304,9 @@ def fig3_score_scatter(data: dict) -> None:
                         textcoords="offset points", xytext=(5, 3),
                         fontsize=8, color=DARK_GREY, fontweight="bold")
 
-        # Trend line
         if len(xs) > 3:
             try:
-                z = np.polyfit(xs, ys, 1)
+                z  = np.polyfit(xs, ys, 1)
                 xr = np.linspace(min(xs), max(xs), 100)
                 ax.plot(xr, np.poly1d(z)(xr), "--",
                         color="grey", alpha=0.45, linewidth=1.2)
@@ -363,24 +355,25 @@ def fig4_confidence(data: dict) -> None:
     dep_w, bbb_w, div_w = dep_raw * 0.45, bbb_raw * 0.35, div_raw * 0.20
     total = dep_w + bbb_w + div_w
 
+    p_sig_clean = p_sig.replace("✅", "").strip()
+
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
     fig.suptitle(
         f"{combo}  —  Confidence Breakdown\n"
-        f"Confidence = {conf:.2f}  •  Priority: {priority}  •  {p_sig}",
+        f"Confidence = {conf:.2f}  •  Priority: {priority}  •  {p_sig_clean}",
         fontsize=12, fontweight="bold", y=1.02,
     )
 
-    # ── left: component bars ──────────────────────────────────────────────────
     ax = axes[0]
-    comp_labels = ["DepMap\nEssentiality\n(×0.45)",
-                   "BBB\nPenetrance\n(×0.35)",
-                   "Target\nDiversity\n(×0.20)"]
-    raw_vals    = [dep_raw, bbb_raw, div_raw]
-    weighted    = [dep_w,   bbb_w,   div_w]
-    bar_colors  = [UCLA_BLUE, UCLA_GOLD, GREEN_ACCENT]
-    sources     = ["Broad Institute\nCRISPR (external)",
-                   "Curated PK\nliterature (external)",
-                   "Target Jaccard\noverlap (computed)"]
+    comp_labels = ["DepMap\nEssentiality\n(x0.45)",
+                   "BBB\nPenetrance\n(x0.35)",
+                   "Target\nDiversity\n(x0.20)"]
+    raw_vals   = [dep_raw, bbb_raw, div_raw]
+    weighted   = [dep_w,   bbb_w,   div_w]
+    bar_colors = [UCLA_BLUE, UCLA_GOLD, GREEN_ACCENT]
+    sources    = ["Broad Institute\nCRISPR (external)",
+                  "Curated PK\nliterature (external)",
+                  "Target Jaccard\noverlap (computed)"]
 
     bars = ax.bar(comp_labels, weighted, color=bar_colors,
                   edgecolor=DARK_GREY, linewidth=0.8, width=0.5)
@@ -389,7 +382,7 @@ def fig4_confidence(data: dict) -> None:
     for bar, raw, w, src, col in zip(bars, raw_vals, weighted, sources, bar_colors):
         ax.text(bar.get_x() + bar.get_width() / 2,
                 w + ymax * 0.04,
-                f"raw = {raw:.2f}  →  {w:.3f}",
+                f"raw = {raw:.2f}  ->  {w:.3f}",
                 ha="center", va="bottom", fontsize=9.5, fontweight="bold")
         if w > ymax * 0.1:
             tc = "white" if col != UCLA_GOLD else DARK_GREY
@@ -409,7 +402,6 @@ def fig4_confidence(data: dict) -> None:
                  fontsize=11, fontweight="bold")
     ax.set_ylim(0, ymax * 1.8)
 
-    # ── right: horizontal stacked bar for top 8 candidates ───────────────────
     ax2  = axes[1]
     top8 = data.get("top_candidates", [])[:8]
 
@@ -425,7 +417,7 @@ def fig4_confidence(data: dict) -> None:
         ax2.barh(y, [d * 0.30 for d in dep], h, color=UCLA_GOLD,    label="DepMap (30%)")
         ax2.barh(y, [t * 0.40 for t in tis], h,
                  left=[d * 0.30 for d in dep],
-                 color=UCLA_BLUE,    label="Tissue/GSC (40%)")
+                 color=UCLA_BLUE, label="Tissue/GSC (40%)")
         left2 = [d * 0.30 + t * 0.40 for d, t in zip(dep, tis)]
         ax2.barh(y, [e * 0.20 for e in esc], h,
                  left=left2, color=GREEN_ACCENT, label="Escape (20%)")
@@ -470,5 +462,5 @@ if __name__ == "__main__":
     print("\n" + "=" * 55)
     print("Done. Add to README.md:")
     for name in ["fig1_cooccurrence", "fig2_drug_rankings",
-                 "fig3_score_scatter", "fig4_confidence"]:
+                 "fig3_score_scatter",  "fig4_confidence"]:
         print(f"  ![{name}](figures/{name}.png)")

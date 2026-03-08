@@ -1,10 +1,10 @@
 {
-  "run_timestamp": "2026-03-07T20:50:32.228675",
+  "run_timestamp": "2026-03-07T22:53:41.108220",
   "disease": "dipg",
   "stats": {
     "p_value": 0.0001157169526793886,
     "p_value_label": "1.16e-04 \u2705 (significant)",
-    "n_drugs_screened": 20,
+    "n_drugs_screened": 557,
     "n_dipg_samples": 184,
     "dipg_specialised": true,
     "novel_count": 0,
@@ -39,9 +39,9 @@
       "name": "BIRABRESIB",
       "targets": [
         "BRD3",
-        "BRD4",
         "BRD2",
-        "BRDT"
+        "BRDT",
+        "BRD4"
       ],
       "score": 0.8709,
       "tissue_expression_score": 0.9248,
@@ -63,17 +63,17 @@
     {
       "name": "PANOBINOSTAT",
       "targets": [
-        "HDAC6",
-        "HDAC9",
-        "HDAC1",
-        "HDAC11",
-        "HDAC10",
         "HDAC5",
-        "HDAC4",
+        "HDAC11",
+        "HDAC1",
         "HDAC7",
-        "HDAC3",
         "HDAC2",
-        "HDAC8"
+        "HDAC8",
+        "HDAC9",
+        "HDAC4",
+        "HDAC10",
+        "HDAC6",
+        "HDAC3"
       ],
       "score": 0.8669,
       "tissue_expression_score": 0.9148,
@@ -162,25 +162,25 @@
     {
       "name": "MARIZOMIB",
       "targets": [
-        "PSMA6",
-        "PSMB11",
-        "PSMB10",
-        "PSMA2",
-        "PSMB1",
-        "PSMB4",
-        "PSMA4",
-        "PSMA8",
-        "PSMA5",
-        "PSMB2",
-        "PSMB5",
-        "PSMB7",
         "PSMB6",
-        "PSMB8",
-        "PSMA1",
-        "PSMA7",
         "PSMA3",
+        "PSMB11",
+        "PSMA5",
+        "PSMB4",
+        "PSMB8",
+        "PSMB5",
+        "PSMA8",
         "PSMB3",
-        "PSMB9"
+        "PSMB7",
+        "PSMA6",
+        "PSMB2",
+        "PSMB1",
+        "PSMB9",
+        "PSMA2",
+        "PSMA7",
+        "PSMA1",
+        "PSMB10",
+        "PSMA4"
       ],
       "score": 0.8094,
       "tissue_expression_score": 0.7236,
@@ -202,9 +202,9 @@
     {
       "name": "INDOXIMOD",
       "targets": [
+        "MTOR",
         "RPTOR",
-        "MLST8",
-        "MTOR"
+        "MLST8"
       ],
       "score": 0.8065,
       "tissue_expression_score": 0.6288,
@@ -249,10 +249,10 @@
     {
       "name": "CRIZOTINIB",
       "targets": [
-        "ALK",
-        "MET",
         "NPM1",
-        "EML4"
+        "MET",
+        "EML4",
+        "ALK"
       ],
       "score": 0.7854,
       "tissue_expression_score": 0.576,
@@ -318,15 +318,15 @@
     {
       "name": "NINTEDANIB",
       "targets": [
-        "FGFR4",
         "FLT1",
         "FLT4",
-        "KDR",
         "PDGFRB",
+        "KDR",
         "FGFR3",
-        "PDGFRA",
+        "FGFR1",
+        "FGFR4",
         "FGFR2",
-        "FGFR1"
+        "PDGFRA"
       ],
       "score": 0.7393,
       "tissue_expression_score": 0.8632,
@@ -349,23 +349,23 @@
       "name": "REGORAFENIB",
       "targets": [
         "DDR2",
-        "TEK",
         "FLT1",
-        "NTRK1",
-        "FLT4",
-        "RAF1",
-        "PDGFRB",
-        "BRAF",
-        "KIT",
-        "KDR",
-        "FRK",
-        "EPHA2",
+        "RET",
         "ABL1",
-        "PDGFRA",
-        "FGFR2",
-        "FGFR1",
+        "FRK",
+        "FLT4",
+        "PDGFRB",
+        "NTRK1",
+        "BRAF",
         "MAPK11",
-        "RET"
+        "KIT",
+        "TEK",
+        "RAF1",
+        "KDR",
+        "EPHA2",
+        "FGFR1",
+        "FGFR2",
+        "PDGFRA"
       ],
       "score": 0.7393,
       "tissue_expression_score": 0.8632,
@@ -387,17 +387,17 @@
     {
       "name": "PAZOPANIB HYDROCHLORIDE",
       "targets": [
+        "CSF1R",
+        "ITK",
         "FLT1",
         "FLT4",
-        "KDR",
         "PDGFRB",
-        "CSF1R",
+        "KDR",
+        "LCK",
         "KIT",
         "FGFR3",
-        "LCK",
-        "PDGFRA",
-        "ITK",
-        "FGFR1"
+        "FGFR1",
+        "PDGFRA"
       ],
       "score": 0.7393,
       "tissue_expression_score": 0.8632,
@@ -419,17 +419,17 @@
     {
       "name": "PAZOPANIB",
       "targets": [
+        "CSF1R",
+        "ITK",
         "FLT1",
         "FLT4",
-        "KDR",
         "PDGFRB",
+        "KDR",
         "KIT",
-        "CSF1R",
-        "FGFR3",
-        "PDGFRA",
         "LCK",
-        "ITK",
-        "FGFR1"
+        "FGFR3",
+        "FGFR1",
+        "PDGFRA"
       ],
       "score": 0.7393,
       "tissue_expression_score": 0.8632,
@@ -585,7 +585,7 @@
       "supporting_streams": [
         "Multi-Omic Integration"
       ],
-      "target_context": "Multi-node blockade targeting BRD3 / BRD4 / BRD2 / BRDT / HDAC6",
+      "target_context": "Multi-node blockade targeting BRD3 / BRD2 / BRDT / BRD4 / HDAC5",
       "mechanism_narrative": "Computationally derived synergistic combination. Selected for mechanism diversity, network proximity, and stem-cell eradication.",
       "statistical_significance": "1.16e-04 \u2705",
       "statistical_note": "Fisher's exact test for H3K27M/CDKN2A-del co-occurrence.",
