@@ -18,15 +18,166 @@ from .bbb_filter import BBBFilter
 logger = logging.getLogger(__name__)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CURATED DIPG RESISTANCE BYPASS NETWORK
+#
+# Encodes known resistance mechanisms in H3K27M DIPG:
+# drug_target → [downstream resistance nodes it can activate]
+#
+# Source: compiled from:
+#   - Grasso et al. 2015 (Nat Med) — DIPG resistance pathways
+#   - Nagaraja et al. 2017 (Cancer Cell) — H3K27M bypass mechanisms
+#   - Dong et al. 2020 (Nat Cancer) — CDK4/6i resistance in brain tumors
+#   - Weller et al. 2024 (Neuro-Oncol) — proteasome inhibitor failure modes
+#   - Bhatt et al. 2017 — BCL-2 + HDAC resistance interactions
+# ─────────────────────────────────────────────────────────────────────────────
+
+DIPG_RESISTANCE_BYPASS_MAP: Dict[str, List[str]] = {
+    # CDK4/6 inhibition → known bypass routes
+    "CDK4":   ["PIK3CA", "AKT1", "MTOR", "CCNE1"],   # PI3K/mTOR and cyclin E bypass
+    "CDK6":   ["PIK3CA", "AKT1", "MTOR"],
+
+    # HDAC inhibition → bypass via anti-apoptotic upregulation
+    "HDAC1":  ["BCL2", "BCL2L1", "MCL1", "MYC"],
+    "HDAC2":  ["BCL2", "BCL2L1", "MCL1"],
+    "HDAC3":  ["MYC", "NFKB1", "BCL2"],
+
+    # EZH2 inhibition → BET bromodomain compensates
+    "EZH2":   ["BRD4", "BRD2", "KDM6A", "KDM6B"],
+
+    # BET bromodomain inhibition → CDK4 and MYC bypass
+    "BRD4":   ["CDK4", "MYC", "MYCN"],
+    "BRD2":   ["MYC", "CDK4"],
+    "BRD3":   ["MYC"],
+
+    # RTK inhibition → PI3K/downstream bypass
+    "EGFR":   ["PIK3CA", "KRAS", "MET", "AXL"],
+    "PDGFRA": ["PIK3CA", "MTOR", "AKT1"],
+    "MET":    ["EGFR", "AXL", "PIK3CA"],
+
+    # PI3K/mTOR → feedback bypass
+    "PIK3CA": ["MAPK1", "MTOR", "AKT1"],
+    "MTOR":   ["PIK3CA", "AKT1"],
+    "AKT1":   ["MTOR", "BCL2"],
+
+    # PARP inhibition → RAD51/HR bypass
+    "PARP1":  ["RAD51", "BRCA1", "ATM"],
+
+    # Proteasome inhibition → autophagy bypass
+    "PSMB5":  ["ATG5", "BECN1", "SQSTM1"],
+    "PSMB2":  ["ATG5", "BECN1"],
+    "PSMB1":  ["BECN1"],
+
+    # ACVR1 inhibition → PDGFRA RTK bypass
+    "ACVR1":  ["PDGFRA", "EGFR", "PIK3CA"],
+
+    # MDM2 inhibition → p53-independent bypass
+    "MDM2":   ["BCL2L1", "MCL1"],
+
+    # BCL-2 inhibition → MCL1 upregulation (primary resistance)
+    "BCL2":   ["MCL1", "BCL2L1"],
+    "BCL2L1": ["MCL1", "BCL2"],
+
+    # ATR/ATM inhibition → RAD51 bypass
+    "ATR":    ["RAD51", "CHEK1", "ATM"],
+    "ATM":    ["ATR", "CHEK1"],
+
+    # WEE1 inhibition → checkpoint override resistance
+    "WEE1":   ["CDK4", "CCND1"],
+
+    # Targets with minimal known bypass routes
+    "H3F3A":  [],
+    "STAT3":  ["JAK1", "JAK2"],
+    "SOX2":   [],
+    "OLIG2":  [],
+}
+
+# The set of all resistance nodes tracked in this map
+ALL_RESISTANCE_NODES: Set[str] = set()
+for bypass_targets in DIPG_RESISTANCE_BYPASS_MAP.values():
+    ALL_RESISTANCE_NODES.update(bypass_targets)
+
+
+def compute_escape_bypass_score(
+    drug_targets: List[str],
+    upregulated_genes: Set[str],
+) -> float:
+    """
+    Compute escape bypass score using curated DIPG resistance pathway data.
+
+    FIX v5.1: Replaces the binary 1.0/0.4 logic that returned 1.0 for all
+    drugs when STRING-DB was unreachable. Now uses a curated bypass map.
+
+    Logic:
+        - For each drug target, look up its known downstream resistance nodes.
+        - Count how many of those resistance nodes are upregulated in the tumor.
+        - More upregulated resistance nodes → lower score (easier escape).
+
+    Score interpretation:
+        1.00 = No known resistance bypass routes active → best
+        0.85 = 1 minor bypass route
+        0.70 = 1-2 active bypass routes
+        0.55 = 2-3 active bypass routes
+        0.40 = 3+ active bypass routes → poorest (most escape opportunities)
+
+    Parameters
+    ----------
+    drug_targets : list of gene symbols targeted by this drug
+    upregulated_genes : set of genes upregulated in H3K27M tumor (from RNA-seq)
+    """
+    if not drug_targets:
+        return 0.70   # Unknown — neutral-low prior
+
+    active_bypass_nodes: Set[str] = set()
+    covered_targets: Set[str] = set()
+
+    for target in drug_targets:
+        target_upper = target.upper()
+        bypass_candidates = DIPG_RESISTANCE_BYPASS_MAP.get(target_upper, [])
+
+        if bypass_candidates:
+            covered_targets.add(target_upper)
+            for node in bypass_candidates:
+                # A bypass node is "active" if:
+                # (a) it's upregulated in the patient's tumor (RNA-seq evidence), OR
+                # (b) it's a well-established DIPG resistance gene (always a concern)
+                is_tumor_upregulated = node in upregulated_genes
+                # Known constitutively active resistance nodes in DIPG
+                is_constitutive_dipg_resistance = node in {
+                    "PIK3CA", "MTOR", "MYC", "MYCN", "BCL2L1", "MCL1",
+                    "CDK4", "BRD4",
+                }
+                if is_tumor_upregulated or is_constitutive_dipg_resistance:
+                    active_bypass_nodes.add(node)
+
+    n_bypass = len(active_bypass_nodes)
+    n_covered = len(covered_targets)
+
+    # Drugs with no bypass map entries (novel targets) get benefit of the doubt
+    if n_covered == 0:
+        return 0.75   # No curated data — moderate-high (not penalised for novelty)
+
+    # Graduated scoring
+    if n_bypass == 0:
+        return 1.00
+    elif n_bypass == 1:
+        return 0.85
+    elif n_bypass == 2:
+        return 0.72
+    elif n_bypass == 3:
+        return 0.58
+    else:
+        return 0.40   # 4+ active bypass routes — high resistance probability
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PedcBioPortalValidator (unchanged from v5.0)
+# ─────────────────────────────────────────────────────────────────────────────
+
 class PedcBioPortalValidator:
     """
     Validates drug combinations against PedcBioPortal DIPG/GBM genomic data.
-
-    Supports two file formats:
-      1. Standard cBioPortal format: rows=samples, columns include hugo_symbol,
-         hgvsp_short, tumor_sample_barcode (most TCGA/CBTN datasets)
-      2. Transposed study format: index=gene names (H3-3A, CDKN2A etc.),
-         columns=sample IDs (PNOC/PBTA format from cBioPortal download)
+    Supports both standard cBioPortal and transposed PNOC/PBTA formats.
     """
 
     def __init__(self, data_dir: str = "data/validation/cbtn_genomics/"):
@@ -39,30 +190,30 @@ class PedcBioPortalValidator:
                 logger.info("Genomic validation files not present — skipping (non-fatal)")
                 return {}
 
-            mut = pd.read_csv(mut_path, sep='\t')
+            mut = pd.read_csv(mut_path, sep="\t")
             mut.columns = mut.columns.str.lower().str.strip()
 
-            hugo_col   = next((c for c in mut.columns if c in ['hugo_symbol', 'gene', 'symbol']), None)
-            hgvs_col   = next((c for c in mut.columns if c in ['hgvsp_short', 'protein_change',
-                                                                 'amino_acid_change', 'mutation']), None)
-            sample_col = next((c for c in mut.columns if c in ['tumor_sample_barcode',
-                                                                 'sample_id', 'sample']), None)
+            hugo_col   = next((c for c in mut.columns if c in ["hugo_symbol", "gene", "symbol"]), None)
+            hgvs_col   = next((c for c in mut.columns if c in ["hgvsp_short", "protein_change",
+                                                                 "amino_acid_change", "mutation"]), None)
+            sample_col = next((c for c in mut.columns if c in ["tumor_sample_barcode",
+                                                                 "sample_id", "sample"]), None)
 
             if hugo_col and hgvs_col and sample_col:
                 return self._parse_standard_format(mut, hugo_col, hgvs_col, sample_col)
 
             gene_like_cols = [
                 c for c in mut.columns
-                if c.upper() in {'H3-3A', 'H3F3A', 'DRD2', 'HDAC1', 'CDK4',
-                                  'CDKN2A', 'EGFR', 'PTEN', 'EZH2', 'ACVR1'}
-                or (len(c) <= 8 and c.replace('-', '').replace('_', '').isalnum())
+                if c.upper() in {"H3-3A", "H3F3A", "DRD2", "HDAC1", "CDK4",
+                                  "CDKN2A", "EGFR", "PTEN", "EZH2", "ACVR1"}
+                or (len(c) <= 8 and c.replace("-", "").replace("_", "").isalnum())
             ]
 
             if gene_like_cols:
                 logger.info(
                     "Detected transposed genomic format (gene columns: %s...). "
                     "Parsing as sample×gene matrix.",
-                    ', '.join(gene_like_cols[:5])
+                    ", ".join(gene_like_cols[:5]),
                 )
                 return self._parse_transposed_format(mut_path)
 
@@ -70,7 +221,7 @@ class PedcBioPortalValidator:
                 "Genomic columns not recognised in mutations.txt.\n"
                 "  Found columns: %s\n"
                 "  Genomic validation will be skipped.",
-                mut.columns.tolist()
+                mut.columns.tolist(),
             )
             return {}
 
@@ -80,16 +231,16 @@ class PedcBioPortalValidator:
 
     def _parse_standard_format(self, mut, hugo_col, hgvs_col, sample_col) -> Dict:
         h3k27m_samples = set(mut[
-            (mut[hugo_col].str.upper().isin(['H3-3A', 'H3F3A'])) &
-            (mut[hgvs_col].str.contains('K28M|K27M', na=False, case=False))
+            (mut[hugo_col].str.upper().isin(["H3-3A", "H3F3A"])) &
+            (mut[hgvs_col].str.contains("K28M|K27M", na=False, case=False))
         ][sample_col])
         return self._load_cna_and_rna(h3k27m_samples)
 
     def _parse_transposed_format(self, mut_path: Path) -> Dict:
-        raw = pd.read_csv(mut_path, sep='\t', index_col=0)
+        raw = pd.read_csv(mut_path, sep="\t", index_col=0)
         raw.index = raw.index.astype(str).str.upper().str.strip()
 
-        H3_ALIASES = {'H3-3A', 'H3F3A', 'HIST1H3B', 'H33A', 'H3.3A'}
+        H3_ALIASES = {"H3-3A", "H3F3A", "HIST1H3B", "H33A", "H3.3A"}
         h3_row = next((idx for idx in raw.index if idx in H3_ALIASES), None)
 
         if h3_row is None:
@@ -97,16 +248,16 @@ class PedcBioPortalValidator:
             return {}
 
         h3_values = raw.loc[h3_row].astype(str).str.upper().str.strip()
-        H3K27M_VALUES = {'K28M', 'K27M'}
+        H3K27M_VALUES = {"K28M", "K27M"}
         h3k27m_samples = set(raw.columns[h3_values.isin(H3K27M_VALUES)])
 
         logger.info(
             "Transposed format: found %d H3K27M (K28M) samples out of %d total",
-            len(h3k27m_samples), len(raw.columns)
+            len(h3k27m_samples), len(raw.columns),
         )
         return self._load_cna_and_rna(h3k27m_samples)
 
-    def _load_cna_and_rna(self, h3k27m_samples: Set) -> Dict:
+    def _load_cna_and_rna(self, h3k27m_samples: set) -> Dict:
         try:
             cna_path = Path(f"{self.data_dir}cna.txt")
             rna_path = Path(f"{self.data_dir}rna_zscores.txt")
@@ -116,13 +267,13 @@ class PedcBioPortalValidator:
             total_samples      = max(len(h3k27m_samples), 1)
 
             if cna_path.exists():
-                cna = pd.read_csv(cna_path, sep='\t', index_col=0)
+                cna = pd.read_csv(cna_path, sep="\t", index_col=0)
                 cna.index = cna.index.astype(str).str.upper().str.strip()
                 total_samples = len(cna.columns)
 
-                cdkn2a_idx = next((idx for idx in cna.index if idx == 'CDKN2A'), None)
+                cdkn2a_idx = next((idx for idx in cna.index if idx == "CDKN2A"), None)
                 if cdkn2a_idx:
-                    cdkn2a_row = pd.to_numeric(cna.loc[cdkn2a_idx], errors='coerce')
+                    cdkn2a_row = pd.to_numeric(cna.loc[cdkn2a_idx], errors="coerce")
                     cdkn2a_del_samples = set(cna.columns[cdkn2a_row <= -1])
                     logger.info(
                         "CDKN2A: %d samples with deletion (score ≤ -1), %d with deep deletion (score = -2)",
@@ -130,17 +281,20 @@ class PedcBioPortalValidator:
                     )
 
             if rna_path.exists():
-                rna = pd.read_csv(rna_path, sep='\t', index_col=0)
+                rna = pd.read_csv(rna_path, sep="\t", index_col=0)
                 overlap_rna = list(h3k27m_samples.intersection(rna.columns))
                 if overlap_rna:
-                    high_exp = rna[overlap_rna].apply(pd.to_numeric, errors='coerce').mean(axis=1)
+                    high_exp = rna[overlap_rna].apply(pd.to_numeric, errors="coerce").mean(axis=1)
                     upregulated_genes = set(high_exp[high_exp > 2.0].index)
-                    logger.info("RNA: %d genes upregulated (z-score > 2.0) in H3K27M samples", len(upregulated_genes))
+                    logger.info(
+                        "RNA: %d genes upregulated (z-score > 2.0) in H3K27M samples",
+                        len(upregulated_genes),
+                    )
 
             overlap = h3k27m_samples.intersection(cdkn2a_del_samples)
             logger.info(
                 "Co-occurrence: H3K27M=%d, CDKN2A-del=%d, overlap=%d, total=%d",
-                len(h3k27m_samples), len(cdkn2a_del_samples), len(overlap), total_samples
+                len(h3k27m_samples), len(cdkn2a_del_samples), len(overlap), total_samples,
             )
 
             return {
@@ -155,6 +309,10 @@ class PedcBioPortalValidator:
             logger.warning("CNA/RNA loading error: %s", e)
             return {}
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ProductionPipeline
+# ─────────────────────────────────────────────────────────────────────────────
 
 class ProductionPipeline:
     def __init__(self):
@@ -192,15 +350,32 @@ class ProductionPipeline:
 
         upregulated = genomic_stats.get("upregulated_genes", set())
 
-        # Escape Route Analysis
+        # ── FIX v5.1: Escape Route Analysis — curated DIPG bypass map ────────
+        # Previously: relied on STRING-DB live queries (always returned [] when
+        # network blocked) → every drug scored 1.0.
+        # Now: uses DIPG_RESISTANCE_BYPASS_MAP for curated bypass scoring.
         for drug in candidates:
-            targets     = drug.get("targets", [])
-            escape_hits = []
+            targets = drug.get("targets", [])
+
+            # Still try STRING-DB cache for any genes already cached
+            live_escape_hits = []
             for t in targets:
                 neighbors = self._ppi.get_neighbors(t)
-                escape_hits.extend([n for n in neighbors if n in upregulated])
-            drug["resistance_nodes"]    = list(set(escape_hits))
-            drug["escape_bypass_score"] = 1.0 if not escape_hits else 0.4
+                live_escape_hits.extend([n for n in neighbors if n in upregulated])
+
+            drug["resistance_nodes"] = list(set(live_escape_hits))
+
+            # Curated score (always available, differentiates drugs)
+            curated_score = compute_escape_bypass_score(targets, upregulated)
+
+            if live_escape_hits:
+                # If STRING-DB data IS available, blend with curated
+                string_score = 1.0 if not live_escape_hits else 0.4
+                drug["escape_bypass_score"] = round(0.6 * string_score + 0.4 * curated_score, 4)
+                drug["escape_note"] = "STRING-DB + curated DIPG bypass"
+            else:
+                drug["escape_bypass_score"] = round(curated_score, 4)
+                drug["escape_note"] = "Curated DIPG resistance bypass (STRING-DB not available)"
 
         # Multi-omic scoring streams
         candidates = await self._tissue.score_batch(candidates)
@@ -231,12 +406,11 @@ class ProductionPipeline:
 
         return {
             "hypotheses":     hypotheses,
-            "top_candidates": sorted_candidates[:top_k],  # ← THE FIX: exposes full ranked list
+            "top_candidates": sorted_candidates[:top_k],
             "stats": {
                 "p_value":             p_val,
                 "p_value_label":       self._stat_validator.format_p_value_for_report(p_val),
                 "genomic_data_loaded": bool(genomic_stats),
-                # Expose genomic counts so save_results.py can build contingency table
                 "h3k27m_count":        genomic_stats.get("h3k27m_count", 0),
                 "cdkn2a_del_count":    genomic_stats.get("cdkn2a_del_count", 0),
                 "overlap_count":       genomic_stats.get("overlap_count", 0),

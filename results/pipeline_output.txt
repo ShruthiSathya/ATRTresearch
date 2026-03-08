@@ -2,10 +2,10 @@
 GBM/DIPG Drug Repurposing Pipeline — save_results.py
   disease  : dipg
   top_n    : 20
-  timestamp: 2026-03-06 09:19:01
+  timestamp: 2026-03-07 18:22:04
 =================================================================
 ✅ CMAP Query Engine Initialized (Real Data Mode)
-✅ PPI Network Module Initialized (Live STRING-DB Connection)
+✅ PPI Network Module Initialized (Live STRING-DB + Curated Fallback)
 ✅ DepMap Essentiality Module Initialized (Real Data Mode)
 ✅ Hypothesis Generator Initialized (Diversity Mode)
 BBB Filter initialized (MW limit: 800.0 Da)
@@ -23,12 +23,14 @@ Co-occurrence: H3K27M=95, CDKN2A-del=50, overlap=14, total=184
 Contingency table → H3K27M+/CDKN2A-del: a=14, b=81, c=36, d=53
 📊 Fisher's exact test: p = 1.1572e-04 (H3K27M+CDKN2A-del co-occurrence; one-sided, n=184)
 ⏳ Loading Single-Cell GBM Matrix... (This takes a moment)
-✅ Single-Cell loaded: Identified 2431 Stem-Like cells out of 16201.
+✅ Single-Cell loaded: 2431 stem-like cells / 16201 total. GSC expression p25=0.00, p50=0.65, p75=14.45, p90=50.37
+✅ Tissue scoring: 557 candidates | 25 unique scores | range=[0.30, 0.93] | distinct values=[0.3, 0.33, 0.35, 0.38, 0.4, 0.55, 0.56, 0.58]
 ⏳ Loading massive DepMap CRISPR dataset into memory...
 OncotreeSubtype filter ('OncotreeSubtype'): matched 72 cell lines
 Loading CRISPRGeneEffect.csv (this is large — may take 30-60s)...
 DepMap cell line matching: 72 found in Model.csv, 52 present in CRISPRGeneEffect.csv
 ✅ DepMap loaded: 52 cell lines, 18435 gene scores computed
+✅ PPI scoring: 557 candidates | distribution: {1.0: 33, 0.85: 28, 0.6: 6, 0.2: 490}
 BBB filter: penalised 14 known GBM clinical trial failures
 
 ── pipeline.run() returned keys: ['hypotheses', 'top_candidates', 'stats']
@@ -49,8 +51,8 @@ Next step: python generate_figures.py
 
 ── Top 5 candidates ────────────────────────────────
   Drug                       Score  BBB       
-  ABEMACICLIB                0.940  HIGH      
-  MARIZOMIB                  0.920  HIGH      
-  HYDROXYUREA                0.920  UNKNOWN   
-  BIRABRESIB                 0.920  UNKNOWN   
-  DOXORUBICIN HYDROCHLORIDE  0.920  UNKNOWN   
+  BIRABRESIB                 0.871  UNKNOWN   
+  BELINOSTAT                 0.867  UNKNOWN   
+  PANOBINOSTAT               0.867  HIGH      
+  ROMIDEPSIN                 0.867  UNKNOWN   
+  ONATASERTIB                0.827  UNKNOWN   
