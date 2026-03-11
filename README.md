@@ -30,7 +30,7 @@ This pipeline integrates five independent data sources to systematically screen 
 | CDKN2A deletion | 50 | 27% |
 | Double-hit (both) | 14 | 7.6% |
 
-Fisher's exact test (one-sided): **p = 7.55×10⁻5e** — H3K27M and CDKN2A deletion co-occur significantly less than expected by chance, indicating mutual exclusivity and alternative oncogenic mechanisms.
+Fisher's exact test (one-sided): **p = 7.55×10^-5** — H3K27M and CDKN2A deletion co-occur significantly less than expected by chance, indicating mutual exclusivity and alternative oncogenic mechanisms.
 
 ### Top Drug Combination Hypothesis
 

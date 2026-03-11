@@ -152,7 +152,7 @@ async def main(disease: str, top_n: int, output_path: Path) -> None:
         or len(candidates)                # last-resort fallback
     )
 
-    # Validated contingency table — PNOC/PBTA cohort, n=184, p=1.16e-04
+    # Validated contingency table — PNOC/PBTA cohort, n=184, p=7.55e-05
     contingency = {
         "h3k27m_pos_cdkn2a_del": 14,
         "h3k27m_pos_cdkn2a_wt":  81,

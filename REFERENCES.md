@@ -53,7 +53,7 @@ Organised by the pipeline component each source justifies.
 **GSE50021 — primary RNA reference (35 DIPG tumours, 10 normal brain)**
 - Grasso, C.S. et al. Functionally defined therapeutic targets in diffuse intrinsic pontine glioma. *Nature Medicine*, 21(6):555–559, 2015. PMID: 25939062
   - Dataset: GSE50021
-  - Platform: Illumina HumanHT-12 v4 (GPL10558)
+  - Platform: GPL13938 (Illumina HumanHT-12 WG-DASL V4.0)
   - 35 pediatric DIPG tumours vs 10 normal brain tissue samples
 
 **GSE115397 — secondary RNA reference (5 H3K27M pons, 3 normal cortex)**
@@ -148,7 +148,7 @@ Organised by the pipeline component each source justifies.
 
 **Fisher's exact test (co-occurrence)**
 - Fisher, R.A. On the interpretation of χ² from contingency tables, and the calculation of P. *Journal of the Royal Statistical Society*, 85(1):87–94, 1922.
-- One-sided test used: testing whether H3K27M and CDKN2A co-occur more than expected by chance (alternative: less)
+- One-sided test used: testing whether H3K27M and CDKN2A co-occur less than expected by chance (alternative: less)
 - Result: p = 7.55e-05 (n=184, a=14, b=81, c=36, d=53)
 
 **Sensitivity analysis**
