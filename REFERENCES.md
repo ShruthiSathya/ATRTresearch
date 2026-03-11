@@ -148,8 +148,8 @@ Organised by the pipeline component each source justifies.
 
 **Fisher's exact test (co-occurrence)**
 - Fisher, R.A. On the interpretation of χ² from contingency tables, and the calculation of P. *Journal of the Royal Statistical Society*, 85(1):87–94, 1922.
-- One-sided test used: testing whether H3K27M and CDKN2A co-occur more than expected by chance (alternative: greater)
-- Result: p = 1.16×10⁻⁴ (n=184, a=14, b=81, c=36, d=53)
+- One-sided test used: testing whether H3K27M and CDKN2A co-occur more than expected by chance (alternative: less)
+- Result: p = 7.55e-05 (n=184, a=14, b=81, c=36, d=53)
 
 **Sensitivity analysis**
 - Composite weight sensitivity: top-2 ranking (Birabresib, Panobinostat) stable under all ±10% single-component perturbations

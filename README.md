@@ -62,7 +62,7 @@ Fisher's exact test (one-sided): **p = 7.55×10⁻5e** — H3K27M and CDKN2A del
 ## Figures
 
 ![H3K27M vs CDKN2A Co-occurrence](figures/fig1_cooccurrence.png)
-*Figure 1. H3K27M mutation and CDKN2A deletion are mutually exclusive in DIPG (p=1.16e-04, Fisher's exact, n=184). Molecular subgroup stratification defines four treatment populations.*
+*Figure 1. H3K27M mutation and CDKN2A deletion are mutually exclusive in DIPG (p=7.55e-05, Fisher's exact, n=184). Molecular subgroup stratification defines four treatment populations.*
 
 ![Top Drug Candidates](figures/fig2_drug_rankings.png)
 *Figure 2. Top 12 drug candidates by composite score across four weighted components.*

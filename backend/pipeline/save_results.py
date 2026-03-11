@@ -181,7 +181,7 @@ async def main(disease: str, top_n: int, output_path: Path) -> None:
             "synergy_validated":    False,
             "data_streams_active": [
                 "DepMap CRISPR (Broad Institute)",
-                "Single-cell RNA-seq (GSE131928)",
+                "Single-cell RNA-seq (GSE102130, Filbin 2018, H3K27M DIPG)",
                 "OpenTargets API",
                 "STRING-DB PPI",
                 "PedcBioPortal genomic validation (PNOC/PBTA, n=184)",
