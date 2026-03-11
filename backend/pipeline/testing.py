@@ -2,7 +2,6 @@ import asyncio
 import logging
 from backend.pipeline.discovery_pipeline import ProductionPipeline
 
-# TURN ON LOGS: This allows us to watch the AI process the gigabytes of data
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("DiscoveryEngine")
 

@@ -1,5 +1,5 @@
 """
-toxicity_constraint.py — v5.4
+toxicity_constraint.py
 Hematologic toxicity penalty for drug combination confidence scoring.
 
 All rates are grade 3/4 hematologic AE frequencies from published trials.

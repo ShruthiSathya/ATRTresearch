@@ -53,7 +53,7 @@ Organised by the pipeline component each source justifies.
 **GSE50021 — primary RNA reference (35 DIPG tumours, 10 normal brain)**
 - Grasso, C.S. et al. Functionally defined therapeutic targets in diffuse intrinsic pontine glioma. *Nature Medicine*, 21(6):555–559, 2015. PMID: 25939062
   - Dataset: GSE50021
-  - Platform: GPL13938 (Illumina HumanHT-12 WG-DASL V4.0)
+  - Platform: Illumina HumanHT-12 v4 BeadChip (GPL13938)
   - 35 pediatric DIPG tumours vs 10 normal brain tissue samples
 
 **GSE115397 — secondary RNA reference (5 H3K27M pons, 3 normal cortex)**

@@ -1,13 +1,3 @@
-"""
-save_results.py — Run the pipeline and save all results to JSON
-===============================================================
-FIX v5.3:
-  n_drugs_screened now reads stats["n_screened"] written by discovery_pipeline.py.
-  This gives the real OpenTargets count (e.g. 557) not top_k (20).
-
-Usage:
-    python -m backend.pipeline.save_results [--disease dipg] [--top_n 20]
-"""
 
 import asyncio
 import json

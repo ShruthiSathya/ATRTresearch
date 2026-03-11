@@ -1,10 +1,3 @@
-"""
-pipeline_config.py — v5.4
-Central configuration for the GBM/DIPG Drug Repurposing Pipeline.
-
-ALL magic numbers live here. To tune the pipeline, edit this file only.
-No numeric literals should appear in pipeline logic files.
-"""
 
 from pathlib import Path
 
