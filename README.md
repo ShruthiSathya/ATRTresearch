@@ -2,7 +2,7 @@
 
 **A multi-omic computational pipeline for prioritising drug combinations in H3K27M-mutant Diffuse Intrinsic Pontine Glioma (DIPG)**
 
-> Developed by Shruthi Sathya | v5.4 | March 2026  
+> Developed by Shruthi Sathya Narayanan| March 2026  
 > Preprint: [add bioRxiv DOI once submitted]  
 > Contact: [your email]
 
@@ -32,7 +32,7 @@ This pipeline integrates five independent data sources to systematically screen 
 | CDKN2A deletion | 50 | 27% |
 | Double-hit (both) | 14 | 7.6% |
 
-Fisher's exact test (one-sided): **p = 1.16×10⁻⁴** — H3K27M and CDKN2A deletion co-occur significantly less than expected by chance, indicating mutual exclusivity and alternative oncogenic mechanisms.
+Fisher's exact test (one-sided): **p = 7.55×10⁻5e** — H3K27M and CDKN2A deletion co-occur significantly less than expected by chance, indicating mutual exclusivity and alternative oncogenic mechanisms.
 
 ### Top Drug Combination Hypothesis
 
