@@ -3,8 +3,6 @@
 **A multi-omic computational pipeline for prioritising drug combinations in H3K27M-mutant Diffuse Intrinsic Pontine Glioma (DIPG)**
 
 > Developed by Shruthi Sathya Narayanan| March 2026  
-> Preprint: [add bioRxiv DOI once submitted]  
-> Contact: [your email]
 
 ---
 
@@ -171,13 +169,6 @@ Minimum experiment set to test the top hypothesis:
 ---
 
 ## Citation
-
-```
-Sathya, S. (2026). Multi-omic drug repurposing pipeline for H3K27M DIPG
-identifies Birabresib + Panobinostat + Abemaciclib as a priority triple combination.
-[Preprint]. bioRxiv. doi: [add once submitted]
-```
-
 Primary data citations: Filbin et al. 2018 (*Science*), Grasso et al. 2015 (*Nature Medicine*),
 Behan et al. 2019 (*Nature*), Monje et al. 2023 (*Nature Medicine*).
 
