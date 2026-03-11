@@ -21,7 +21,11 @@ logger = logging.getLogger(__name__)
 
 DIPG_GSC_CURATED_SCORES: Dict[str, float] = {
     # ── Epigenetic targets ────────────────────────────────────────────────────
-    "EZH2":    0.92,
+    # EZH2: H3K27M is a dominant-negative inhibitor of PRC2/EZH2 complex.
+    # EZH2 activity is LOW in H3K27M DIPG — Bender et al. 2014 (Cancer Cell).
+    # EZH2 inhibitors (tazemetostat) have no rationale in H3K27M DIPG.
+    # Score set to 0.22 to prevent false boosting of EZH2 inhibitors.
+    "EZH2":    0.22,
     "EED":     0.88,
     "SUZ12":   0.85,
     "BRD4":    0.90,

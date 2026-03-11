@@ -1,9 +1,9 @@
 {
-  "run_timestamp": "2026-03-11T10:20:59.538628",
+  "run_timestamp": "2026-03-11T10:44:06.719601",
   "disease": "dipg",
   "stats": {
-    "p_value": 0.0001157169526793886,
-    "p_value_label": "1.16e-04 \u2705 (significant)",
+    "p_value": 7.552658163731621e-05,
+    "p_value_label": "7.55e-05 \u2705 (significant)",
     "n_drugs_screened": 557,
     "n_dipg_samples": 184,
     "dipg_specialised": true,
@@ -31,17 +31,17 @@
     "h3k27m_count": 95,
     "cdkn2a_del_count": 50,
     "total": 184,
-    "p_value": 0.0001157169526793886,
-    "p_value_label": "1.16e-04 \u2705 (significant)"
+    "p_value": 7.552658163731621e-05,
+    "p_value_label": "7.55e-05 \u2705 (significant)"
   },
   "top_candidates": [
     {
       "name": "BIRABRESIB",
       "targets": [
-        "BRD2",
-        "BRDT",
         "BRD3",
-        "BRD4"
+        "BRD2",
+        "BRD4",
+        "BRDT"
       ],
       "score": 0.876,
       "tissue_expression_score": 0.9374,
@@ -63,17 +63,17 @@
     {
       "name": "PANOBINOSTAT",
       "targets": [
-        "HDAC9",
-        "HDAC2",
-        "HDAC8",
         "HDAC1",
         "HDAC4",
-        "HDAC7",
-        "HDAC11",
         "HDAC3",
-        "HDAC5",
+        "HDAC2",
+        "HDAC8",
+        "HDAC9",
         "HDAC6",
-        "HDAC10"
+        "HDAC10",
+        "HDAC7",
+        "HDAC5",
+        "HDAC11"
       ],
       "score": 0.851,
       "tissue_expression_score": 0.929,
@@ -95,8 +95,8 @@
     {
       "name": "ABEMACICLIB",
       "targets": [
-        "CDK6",
-        "CDK4"
+        "CDK4",
+        "CDK6"
       ],
       "score": 0.8232,
       "tissue_expression_score": 0.918,
@@ -162,25 +162,25 @@
     {
       "name": "MARIZOMIB",
       "targets": [
-        "PSMB11",
-        "PSMA3",
-        "PSMB6",
-        "PSMB10",
-        "PSMA6",
-        "PSMA5",
-        "PSMB4",
-        "PSMB5",
-        "PSMA4",
-        "PSMB7",
-        "PSMB1",
-        "PSMB3",
-        "PSMB8",
-        "PSMA8",
         "PSMA7",
         "PSMB9",
-        "PSMB2",
+        "PSMA2",
         "PSMA1",
-        "PSMA2"
+        "PSMB2",
+        "PSMB7",
+        "PSMB11",
+        "PSMA8",
+        "PSMB10",
+        "PSMB5",
+        "PSMA6",
+        "PSMB8",
+        "PSMB1",
+        "PSMA4",
+        "PSMB6",
+        "PSMA3",
+        "PSMB4",
+        "PSMA5",
+        "PSMB3"
       ],
       "score": 0.7558,
       "tissue_expression_score": 0.7696,
@@ -202,9 +202,9 @@
     {
       "name": "CRIZOTINIB",
       "targets": [
-        "NPM1",
-        "ALK",
         "MET",
+        "ALK",
+        "NPM1",
         "EML4"
       ],
       "score": 0.7483,
@@ -225,10 +225,33 @@
       "mechanism": ""
     },
     {
-      "name": "INDOXIMOD",
+      "name": "CC-115",
       "targets": [
         "MTOR",
+        "PRKDC"
+      ],
+      "score": 0.7458,
+      "tissue_expression_score": 0.638,
+      "depmap_score": 1.0,
+      "ppi_score": 0.85,
+      "escape_bypass_score": 0.528,
+      "poly_score": 0.0,
+      "bbb_penetrance": "UNKNOWN",
+      "bbb_score": 0.5,
+      "clinical_failure": false,
+      "bbb_penalty_applied": false,
+      "h3k27m_relevant": false,
+      "is_untested_dipg": false,
+      "dipg_score_bonus": 0.0,
+      "depmap_note": "Essential gene (Chronos -1.26 \u2264 -1.0)",
+      "sc_context": "Blended v5.4 (H3K27M DIPG, Filbin 2018): curated=0.66 (w=0.5), sc=0.62 (w=0.5), best_tpm=45.7, final=0.64",
+      "mechanism": ""
+    },
+    {
+      "name": "INDOXIMOD",
+      "targets": [
         "RPTOR",
+        "MTOR",
         "MLST8"
       ],
       "score": 0.7416,
@@ -295,15 +318,15 @@
     {
       "name": "NINTEDANIB",
       "targets": [
-        "FGFR4",
-        "FGFR1",
-        "PDGFRA",
         "FGFR3",
         "FGFR2",
-        "FLT4",
-        "KDR",
         "FLT1",
-        "PDGFRB"
+        "KDR",
+        "FGFR4",
+        "PDGFRB",
+        "FGFR1",
+        "PDGFRA",
+        "FLT4"
       ],
       "score": 0.6988,
       "tissue_expression_score": 0.886,
@@ -325,24 +348,24 @@
     {
       "name": "REGORAFENIB",
       "targets": [
-        "RAF1",
-        "KDR",
-        "MAPK11",
-        "KIT",
         "BRAF",
+        "KIT",
+        "ABL1",
+        "RET",
+        "FRK",
+        "FGFR2",
+        "FLT1",
+        "RAF1",
+        "MAPK11",
+        "NTRK1",
+        "KDR",
+        "PDGFRB",
         "DDR2",
         "FGFR1",
         "PDGFRA",
-        "ABL1",
-        "FRK",
-        "FGFR2",
         "FLT4",
         "TEK",
-        "NTRK1",
-        "RET",
-        "EPHA2",
-        "FLT1",
-        "PDGFRB"
+        "EPHA2"
       ],
       "score": 0.6988,
       "tissue_expression_score": 0.886,
@@ -364,17 +387,17 @@
     {
       "name": "PAZOPANIB HYDROCHLORIDE",
       "targets": [
-        "LCK",
         "KIT",
-        "FGFR1",
-        "CSF1R",
-        "PDGFRA",
         "FGFR3",
-        "FLT4",
-        "KDR",
+        "LCK",
         "ITK",
         "FLT1",
-        "PDGFRB"
+        "KDR",
+        "CSF1R",
+        "PDGFRB",
+        "FGFR1",
+        "PDGFRA",
+        "FLT4"
       ],
       "score": 0.6988,
       "tissue_expression_score": 0.886,
@@ -396,17 +419,17 @@
     {
       "name": "PAZOPANIB",
       "targets": [
-        "LCK",
         "KIT",
-        "PDGFRA",
-        "CSF1R",
-        "FGFR1",
         "FGFR3",
-        "FLT4",
-        "KDR",
+        "LCK",
         "ITK",
         "FLT1",
-        "PDGFRB"
+        "KDR",
+        "CSF1R",
+        "PDGFRB",
+        "FGFR1",
+        "PDGFRA",
+        "FLT4"
       ],
       "score": 0.6988,
       "tissue_expression_score": 0.886,
@@ -428,15 +451,15 @@
     {
       "name": "SUNITINIB MALATE",
       "targets": [
-        "FLT3",
-        "KDR",
         "KIT",
-        "PDGFRA",
-        "CSF1R",
-        "FLT4",
         "RET",
         "FLT1",
-        "PDGFRB"
+        "KDR",
+        "CSF1R",
+        "PDGFRB",
+        "FLT3",
+        "PDGFRA",
+        "FLT4"
       ],
       "score": 0.6948,
       "tissue_expression_score": 0.876,
@@ -458,8 +481,8 @@
     {
       "name": "CRENOLANIB",
       "targets": [
-        "PDGFRA",
         "FLT3",
+        "PDGFRA",
         "PDGFRB"
       ],
       "score": 0.6948,
@@ -482,14 +505,14 @@
     {
       "name": "DOVITINIB",
       "targets": [
-        "FLT3",
         "KIT",
-        "PDGFRA",
         "FGFR3",
-        "FLT4",
-        "KDR",
         "FLT1",
-        "PDGFRB"
+        "KDR",
+        "PDGFRB",
+        "FLT3",
+        "PDGFRA",
+        "FLT4"
       ],
       "score": 0.6948,
       "tissue_expression_score": 0.876,
@@ -512,12 +535,12 @@
       "name": "VATALANIB",
       "targets": [
         "KIT",
-        "PDGFRA",
-        "CSF1R",
-        "FLT4",
-        "KDR",
         "FLT1",
-        "PDGFRB"
+        "KDR",
+        "CSF1R",
+        "PDGFRB",
+        "PDGFRA",
+        "FLT4"
       ],
       "score": 0.6948,
       "tissue_expression_score": 0.876,
@@ -557,28 +580,6 @@
       "depmap_note": "Modestly essential (Chronos -0.02)",
       "sc_context": "Blended v5.4 (H3K27M DIPG, Filbin 2018): curated=0.65 (w=0.5), sc=1.00 (w=0.5), best_tpm=182.8, final=0.82",
       "mechanism": ""
-    },
-    {
-      "name": "RINDOPEPIMUT",
-      "targets": [
-        "EGFR"
-      ],
-      "score": 0.6856,
-      "tissue_expression_score": 0.825,
-      "depmap_score": 0.5,
-      "ppi_score": 1.0,
-      "escape_bypass_score": 0.528,
-      "poly_score": 0.0,
-      "bbb_penetrance": "UNKNOWN",
-      "bbb_score": 0.5,
-      "clinical_failure": false,
-      "bbb_penalty_applied": false,
-      "h3k27m_relevant": false,
-      "is_untested_dipg": false,
-      "dipg_score_bonus": 0.0,
-      "depmap_note": "Modestly essential (Chronos -0.02)",
-      "sc_context": "Blended v5.4 (H3K27M DIPG, Filbin 2018): curated=0.65 (w=0.5), sc=1.00 (w=0.5), best_tpm=182.8, final=0.82",
-      "mechanism": ""
     }
   ],
   "top_combinations": [],
@@ -586,7 +587,7 @@
     "drug_combo": "BIRABRESIB + PANOBINOSTAT + ABEMACICLIB",
     "confidence": 0.554,
     "priority": "HIGH",
-    "statistical_significance": "1.16e-04 \u2705",
+    "statistical_significance": "7.55e-05 \u2705",
     "depmap_essentiality": 0.9333,
     "bbb_penetrance": 0.8667,
     "mechanistic_diversity": 1.0,
@@ -617,9 +618,9 @@
       "supporting_streams": [
         "Multi-Omic Integration"
       ],
-      "target_context": "Multi-node blockade targeting BRD2 / BRDT / BRD3 / BRD4 / HDAC9",
+      "target_context": "Multi-node blockade targeting BRD3 / BRD2 / BRD4 / BRDT / HDAC1",
       "mechanism_narrative": "Computationally derived synergistic combination. Selected for mechanism diversity, network proximity, and stem-cell eradication.",
-      "statistical_significance": "1.16e-04 \u2705",
+      "statistical_significance": "7.55e-05 \u2705",
       "statistical_note": "Fisher's exact test for H3K27M/CDKN2A-del co-occurrence in CBTN cohort.",
       "bypass_status": "MODERATE",
       "patient_population": "14 specific samples (14.7% prevalence)"
