@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import math
 import pandas as pd
 from typing import Dict, List, Optional, Set
 from pathlib import Path
@@ -14,12 +13,20 @@ from .hypothesis_generator import HypothesisGenerator
 from .statistical_validator import StatisticalValidator
 from .tissue_expression import TissueExpressionScorer
 from .bbb_filter import BBBFilter
+from .pipeline_config import (
+    COMPOSITE_WEIGHTS,
+    SCORE_DEFAULTS,
+    ESCAPE,
+    GENOMICS,
+    PATHS,
+)
 
 logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CURATED DIPG RESISTANCE BYPASS NETWORK
+# Sources: Grasso 2015, Nagaraja 2017, Filbin 2018, Mackay 2017
 # ─────────────────────────────────────────────────────────────────────────────
 
 DIPG_RESISTANCE_BYPASS_MAP: Dict[str, List[str]] = {
@@ -36,6 +43,8 @@ DIPG_RESISTANCE_BYPASS_MAP: Dict[str, List[str]] = {
     "PDGFRA": ["PIK3CA", "MTOR", "AKT1"],
     "MET":    ["EGFR", "AXL", "PIK3CA"],
     "PIK3CA": ["MAPK1", "MTOR", "AKT1"],
+    "PIK3CD": ["MAPK1", "MTOR", "AKT1"],
+    "PIK3CG": ["MAPK1", "MTOR", "AKT1"],
     "MTOR":   ["PIK3CA", "AKT1"],
     "AKT1":   ["MTOR", "BCL2"],
     "PARP1":  ["RAD51", "BRCA1", "ATM"],
@@ -55,10 +64,6 @@ DIPG_RESISTANCE_BYPASS_MAP: Dict[str, List[str]] = {
     "OLIG2":  [],
 }
 
-ALL_RESISTANCE_NODES: Set[str] = set()
-for bypass_targets in DIPG_RESISTANCE_BYPASS_MAP.values():
-    ALL_RESISTANCE_NODES.update(bypass_targets)
-
 
 def compute_escape_bypass_score(
     drug_targets: List[str],
@@ -66,43 +71,34 @@ def compute_escape_bypass_score(
 ) -> float:
     """
     Compute escape bypass score using curated DIPG resistance pathway data.
-    1.00 = no active bypass | 0.40 = 4+ active bypass routes
+    Scores per number of active bypass nodes are read from pipeline_config.ESCAPE.
+    Constitutive resistance nodes are also from config.
     """
     if not drug_targets:
-        return 0.70
+        return ESCAPE["empty_target_score"]
 
+    constitutive = ESCAPE["constitutive_resistance_nodes"]
     active_bypass_nodes: Set[str] = set()
-    covered_targets: Set[str] = set()
+    covered_targets:     Set[str] = set()
 
     for target in drug_targets:
-        target_upper = target.upper()
+        target_upper      = target.upper()
         bypass_candidates = DIPG_RESISTANCE_BYPASS_MAP.get(target_upper, [])
         if bypass_candidates:
             covered_targets.add(target_upper)
             for node in bypass_candidates:
-                is_tumor_upregulated = node in upregulated_genes
-                is_constitutive_dipg_resistance = node in {
-                    "PIK3CA", "MTOR", "MYC", "MYCN", "BCL2L1", "MCL1", "CDK4", "BRD4",
-                }
-                if is_tumor_upregulated or is_constitutive_dipg_resistance:
+                if node in upregulated_genes or node in constitutive:
                     active_bypass_nodes.add(node)
 
-    n_bypass  = len(active_bypass_nodes)
-    n_covered = len(covered_targets)
+    if not covered_targets:
+        return ESCAPE["no_target_score"]
 
-    if n_covered == 0:
-        return 0.75
-
-    if n_bypass == 0:
-        return 1.00
-    elif n_bypass == 1:
-        return 0.85
-    elif n_bypass == 2:
-        return 0.72
-    elif n_bypass == 3:
-        return 0.58
-    else:
-        return 0.40
+    n_bypass     = len(active_bypass_nodes)
+    bypass_scores = ESCAPE["bypass_scores"]
+    # Use the highest key that n_bypass meets or exceeds
+    max_key = max(bypass_scores.keys())
+    score   = bypass_scores.get(n_bypass, bypass_scores[max_key])
+    return score
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -110,12 +106,12 @@ def compute_escape_bypass_score(
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PedcBioPortalValidator:
-    def __init__(self, data_dir: str = "data/validation/cbtn_genomics/"):
-        self.data_dir = data_dir
+    def __init__(self, data_dir: str = None):
+        self.data_dir = data_dir or PATHS["genomics"]
 
     def validate_triple_combo_cohort(self) -> Dict:
         try:
-            mut_path = Path(f"{self.data_dir}mutations.txt")
+            mut_path = Path(self.data_dir) / "mutations.txt"
             if not mut_path.exists():
                 logger.info("Genomic validation files not present — skipping (non-fatal)")
                 return {}
@@ -134,8 +130,8 @@ class PedcBioPortalValidator:
 
             gene_like_cols = [
                 c for c in mut.columns
-                if c.upper() in {"H3-3A", "H3F3A", "DRD2", "HDAC1", "CDK4",
-                                  "CDKN2A", "EGFR", "PTEN", "EZH2", "ACVR1"}
+                if c.upper() in GENOMICS["h3_gene_aliases"]
+                   | {"DRD2", "HDAC1", "CDK4", "CDKN2A", "EGFR", "PTEN", "EZH2", "ACVR1"}
                 or (len(c) <= 8 and c.replace("-", "").replace("_", "").isalnum())
             ]
 
@@ -149,8 +145,7 @@ class PedcBioPortalValidator:
 
             logger.warning(
                 "Genomic columns not recognised in mutations.txt.\n"
-                "  Found columns: %s\n"
-                "  Genomic validation will be skipped.",
+                "  Found columns: %s\n  Genomic validation will be skipped.",
                 mut.columns.tolist(),
             )
             return {}
@@ -160,26 +155,27 @@ class PedcBioPortalValidator:
             return {}
 
     def _parse_standard_format(self, mut, hugo_col, hgvs_col, sample_col) -> Dict:
+        h3k27m_values = GENOMICS["h3k27m_values"]
+        h3_aliases    = GENOMICS["h3_gene_aliases"]
         h3k27m_samples = set(mut[
-            (mut[hugo_col].str.upper().isin(["H3-3A", "H3F3A"])) &
-            (mut[hgvs_col].str.contains("K28M|K27M", na=False, case=False))
+            (mut[hugo_col].str.upper().isin(h3_aliases)) &
+            (mut[hgvs_col].str.contains("|".join(h3k27m_values), na=False, case=False))
         ][sample_col])
         return self._load_cna_and_rna(h3k27m_samples)
 
     def _parse_transposed_format(self, mut_path: Path) -> Dict:
-        raw = pd.read_csv(mut_path, sep="\t", index_col=0)
+        raw       = pd.read_csv(mut_path, sep="\t", index_col=0)
         raw.index = raw.index.astype(str).str.upper().str.strip()
 
-        H3_ALIASES = {"H3-3A", "H3F3A", "HIST1H3B", "H33A", "H3.3A"}
-        h3_row = next((idx for idx in raw.index if idx in H3_ALIASES), None)
+        h3_aliases = GENOMICS["h3_gene_aliases"]
+        h3_row     = next((idx for idx in raw.index if idx in h3_aliases), None)
 
         if h3_row is None:
             logger.warning("Transposed format: H3K27M row not found. Skipping.")
             return {}
 
         h3_values      = raw.loc[h3_row].astype(str).str.upper().str.strip()
-        H3K27M_VALUES  = {"K28M", "K27M"}
-        h3k27m_samples = set(raw.columns[h3_values.isin(H3K27M_VALUES)])
+        h3k27m_samples = set(raw.columns[h3_values.isin(GENOMICS["h3k27m_values"])])
 
         logger.info(
             "Transposed format: found %d H3K27M (K28M) samples out of %d total",
@@ -189,37 +185,112 @@ class PedcBioPortalValidator:
 
     def _load_cna_and_rna(self, h3k27m_samples: set) -> Dict:
         try:
-            cna_path = Path(f"{self.data_dir}cna.txt")
-            rna_path = Path(f"{self.data_dir}rna_zscores.txt")
+            data_dir      = Path(self.data_dir)
+            cna_path      = data_dir / "cna.txt"
+            rna_path      = data_dir / "rna_zscores.txt"
+            rna_threshold = GENOMICS["rna_upregulation_zscore"]
+            cna_threshold = GENOMICS["cna_deletion_threshold"]
 
             cdkn2a_del_samples = set()
             upregulated_genes  = set()
             total_samples      = max(len(h3k27m_samples), 1)
 
             if cna_path.exists():
-                cna = pd.read_csv(cna_path, sep="\t", index_col=0)
-                cna.index     = cna.index.astype(str).str.upper().str.strip()
+                cna       = pd.read_csv(cna_path, sep="\t", index_col=0)
+                cna.index = cna.index.astype(str).str.upper().str.strip()
                 total_samples = len(cna.columns)
 
                 cdkn2a_idx = next((idx for idx in cna.index if idx == "CDKN2A"), None)
                 if cdkn2a_idx:
                     cdkn2a_row         = pd.to_numeric(cna.loc[cdkn2a_idx], errors="coerce")
-                    cdkn2a_del_samples = set(cna.columns[cdkn2a_row <= -1])
+                    cdkn2a_del_samples = set(cna.columns[cdkn2a_row <= cna_threshold])
                     logger.info(
-                        "CDKN2A: %d samples with deletion (score ≤ -1), %d with deep deletion (score = -2)",
-                        len(cdkn2a_del_samples), len(cna.columns[cdkn2a_row == -2])
+                        "CDKN2A: %d samples with deletion (score ≤ %d), "
+                        "%d with deep deletion (score = -2)",
+                        len(cdkn2a_del_samples), cna_threshold,
+                        len(cna.columns[cdkn2a_row == -2])
                     )
 
             if rna_path.exists():
-                rna         = pd.read_csv(rna_path, sep="\t", index_col=0)
-                overlap_rna = list(h3k27m_samples.intersection(rna.columns))
-                if overlap_rna:
-                    high_exp          = rna[overlap_rna].apply(pd.to_numeric, errors="coerce").mean(axis=1)
-                    upregulated_genes = set(high_exp[high_exp > 2.0].index)
-                    logger.info(
-                        "RNA: %d genes upregulated (z-score > 2.0) in H3K27M samples",
-                        len(upregulated_genes),
+                rna = pd.read_csv(rna_path, sep="\t", index_col=0)
+
+                # ── Validate this is a full expression matrix ─────────────────
+                metadata_rows     = GENOMICS["rna_metadata_rows"]
+                min_genes         = GENOMICS["rna_min_genes_required"]
+                rna_threshold     = GENOMICS["rna_upregulation_zscore"]
+                h3k27m_indicators = GENOMICS["rna_h3k27m_col_indicators"]
+                normal_indicators = GENOMICS["rna_normal_col_indicators"]
+
+                gene_rows = [r for r in rna.index
+                             if str(r).upper().strip() not in metadata_rows]
+
+                if len(gene_rows) < min_genes:
+                    logger.warning(
+                        "⚠️  rna_zscores.txt contains only %d gene rows — "
+                        "clinical summary file, not an expression matrix. "
+                        "RNA upregulation skipped. Escape bypass uses "
+                        "constitutive DIPG resistance nodes only.",
+                        len(gene_rows),
                     )
+                else:
+                    rna_expr    = rna.loc[gene_rows]
+                    overlap_rna = list(h3k27m_samples.intersection(rna_expr.columns))
+
+                    if overlap_rna:
+                        # ── Matched cohort mode: sample IDs align ─────────────
+                        high_exp          = rna_expr[overlap_rna].apply(
+                            pd.to_numeric, errors="coerce"
+                        ).mean(axis=1)
+                        upregulated_genes = set(high_exp[high_exp > rna_threshold].index)
+                        logger.info(
+                            "RNA (matched cohort): %d genes upregulated "
+                            "(value > %.1f) in %d H3K27M samples "
+                            "(from %d-gene matrix)",
+                            len(upregulated_genes), rna_threshold,
+                            len(overlap_rna), len(gene_rows),
+                        )
+                    else:
+                        # ── Reference cohort mode: different dataset (e.g. GSE115397)
+                        # Identify H3K27M tumour columns by name pattern
+                        h3k27m_ref_cols = [
+                            c for c in rna_expr.columns
+                            if any(ind.lower() in c.lower()
+                                   for ind in h3k27m_indicators)
+                            and not any(n.lower() in c.lower()
+                                        for n in normal_indicators)
+                        ]
+                        normal_ref_cols = [
+                            c for c in rna_expr.columns
+                            if any(n.lower() in c.lower()
+                                   for n in normal_indicators)
+                        ]
+
+                        if h3k27m_ref_cols:
+                            high_exp = rna_expr[h3k27m_ref_cols].apply(
+                                pd.to_numeric, errors="coerce"
+                            ).mean(axis=1)
+                            upregulated_genes = set(
+                                high_exp[high_exp > rna_threshold].index
+                            )
+                            logger.info(
+                                "RNA (reference cohort mode): %d genes upregulated "
+                                "(value > %.1f) in %d H3K27M reference samples "
+                                "(%s...) from %d-gene matrix. "
+                                "Normal columns excluded: %s",
+                                len(upregulated_genes), rna_threshold,
+                                len(h3k27m_ref_cols),
+                                ", ".join(h3k27m_ref_cols[:3]),
+                                len(gene_rows),
+                                normal_ref_cols,
+                            )
+                        else:
+                            logger.warning(
+                                "RNA: no sample ID overlap and no H3K27M "
+                                "indicator columns found in rna_zscores.txt. "
+                                "Columns present: %s. "
+                                "RNA upregulation skipped.",
+                                rna_expr.columns.tolist()[:5],
+                            )
 
             overlap = h3k27m_samples.intersection(cdkn2a_del_samples)
             logger.info(
@@ -274,13 +345,11 @@ class ProductionPipeline:
 
         # Genomic validation
         genomic_stats = self._genomic_validator.validate_triple_combo_cohort()
+        p_val         = self._stat_validator.calculate_cooccurrence_p_value(genomic_stats)
+        upregulated   = genomic_stats.get("upregulated_genes", set())
 
-        # p-value
-        p_val = self._stat_validator.calculate_cooccurrence_p_value(genomic_stats)
-
-        upregulated = genomic_stats.get("upregulated_genes", set())
-
-        # ── Escape Route Analysis — curated DIPG bypass map ──────────────────
+        # ── Escape Route Analysis ─────────────────────────────────────────────
+        ew = ESCAPE
         for drug in candidates:
             targets = drug.get("targets", [])
 
@@ -290,35 +359,47 @@ class ProductionPipeline:
                 live_escape_hits.extend([n for n in neighbors if n in upregulated])
 
             drug["resistance_nodes"] = list(set(live_escape_hits))
-
             curated_score = compute_escape_bypass_score(targets, upregulated)
 
             if live_escape_hits:
-                string_score = 1.0 if not live_escape_hits else 0.4
-                drug["escape_bypass_score"] = round(0.6 * string_score + 0.4 * curated_score, 4)
+                drug["escape_bypass_score"] = round(
+                    ew["string_weight"]  * ew["string_hit_score"]
+                    + ew["curated_weight"] * curated_score,
+                    4
+                )
                 drug["escape_note"] = "STRING-DB + curated DIPG bypass"
             else:
                 drug["escape_bypass_score"] = round(curated_score, 4)
-                drug["escape_note"] = "Curated DIPG resistance bypass (STRING-DB not available)"
+                drug["escape_note"]         = "Curated DIPG resistance bypass"
 
-        # Multi-omic scoring streams
+        # Multi-omic scoring
         candidates = await self._tissue.score_batch(candidates)
         candidates = await self._depmap.score_batch(candidates, disease_name)
         candidates = await self._ppi.score_batch(candidates, disease_data["genes"])
 
-        # Composite score
+        # Composite score — weights and defaults from config
+        cw = COMPOSITE_WEIGHTS
+        sd = SCORE_DEFAULTS
         for c in candidates:
-            t_score = c.get("tissue_expression_score", 0.1)
-            d_score = c.get("depmap_score", 0.1)
-            p_score = c.get("ppi_score", 0.1)
-            e_score = c.get("escape_bypass_score", 0.4)
-            c["score"] = (t_score * 0.40) + (d_score * 0.30) + (e_score * 0.20) + (p_score * 0.10)
+            t_score = c.get("tissue_expression_score", sd["tissue_expression_score"])
+            d_score = c.get("depmap_score",            sd["depmap_score"])
+            p_score = c.get("ppi_score",               sd["ppi_score"])
+            e_score = c.get("escape_bypass_score",     sd["escape_bypass_score"])
+            c["score"] = round(
+                t_score * cw["tissue"]
+                + d_score * cw["depmap"]
+                + e_score * cw["escape"]
+                + p_score * cw["ppi"],
+                4
+            )
 
         # BBB filter
         candidates, _ = self._bbb_filter.filter_and_rank(candidates, apply_penalty=True)
-
         sorted_candidates = sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)
 
+        # Generate hypotheses
+        # NOTE: toxicity penalty is computed INSIDE hypothesis_generator only.
+        # Do NOT call combination_toxicity_penalty here — it would duplicate the log.
         hypotheses = self._hyp_gen.generate(
             candidates        = sorted_candidates[:top_k],
             cmap_results      = [],
@@ -327,6 +408,16 @@ class ProductionPipeline:
             genomic_stats     = genomic_stats,
             p_value           = p_val,
         )
+
+        # Extract toxicity stats from the generated hypothesis for the stats dict
+        tox_breakdown = {}
+        if hypotheses and "confidence_breakdown" in hypotheses[0]:
+            bd = hypotheses[0]["confidence_breakdown"]
+            tox_breakdown = {
+                "toxicity_flag":       bd.get("toxicity_flag", "UNKNOWN"),
+                "toxicity_multiplier": bd.get("toxicity_multiplier", 1.0),
+                "toxicity_note":       bd.get("toxicity_note", ""),
+            }
 
         return {
             "hypotheses":     hypotheses,
@@ -339,10 +430,8 @@ class ProductionPipeline:
                 "cdkn2a_del_count":    genomic_stats.get("cdkn2a_del_count", 0),
                 "overlap_count":       genomic_stats.get("overlap_count", 0),
                 "total_samples":       genomic_stats.get("total_samples", 0),
-                # ── FIX v5.3 ─────────────────────────────────────────────────
-                # len(sorted_candidates) = full OpenTargets count BEFORE [:top_k]
-                # slice. save_results.py reads this as stats["n_screened"].
-                # Without this fix, n_drugs_screened was always == top_k (20).
                 "n_screened":          len(sorted_candidates),
+                "composite_weights":   cw,
+                **tox_breakdown,
             },
         }

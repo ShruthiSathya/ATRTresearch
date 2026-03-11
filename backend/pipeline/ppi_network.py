@@ -1,6 +1,10 @@
 import asyncio
 import aiohttp
 import logging
+try:
+    from .pipeline_config import PPI as PPI_CONFIG
+except ImportError:
+    from pipeline_config import PPI as PPI_CONFIG
 from typing import Dict, List, Set
 
 logger = logging.getLogger(__name__)
@@ -203,7 +207,7 @@ class PPINetwork:
                     if t not in self.cache:
                         live_nb = await self.fetch_neighbors_live(t, session)
                         if set(live_nb) & disease_set:
-                            c["ppi_score"] = 0.85
+                            c["ppi_score"] = PPI_CONFIG["first_degree_score"]
                             c["network_context"] = f"STRING-DB 1st-degree neighbor (live)"
                             live_upgraded = True
                             break
@@ -214,7 +218,7 @@ class PPINetwork:
                 # Check curated 1st-degree neighbors
                 first_degree_hits = target_set & disease_neighbors
                 if first_degree_hits:
-                    c["ppi_score"] = 0.85
+                    c["ppi_score"] = PPI_CONFIG["first_degree_score"]
                     c["network_context"] = (
                         f"1st-degree neighbor: {', '.join(sorted(first_degree_hits)[:3])}"
                     )
@@ -223,14 +227,14 @@ class PPINetwork:
                 # Check 2nd-degree
                 second_degree_hits = target_set & disease_2nd
                 if second_degree_hits:
-                    c["ppi_score"] = 0.60
+                    c["ppi_score"] = PPI_CONFIG["second_degree_score"]
                     c["network_context"] = (
                         f"2nd-degree neighbor: {', '.join(sorted(second_degree_hits)[:3])}"
                     )
                     continue
 
                 # No network proximity found
-                c["ppi_score"] = 0.20
+                c["ppi_score"] = PPI_CONFIG["no_proximity_score"]
                 c["network_context"] = "No PPI proximity to disease gene network"
 
         # Log distribution

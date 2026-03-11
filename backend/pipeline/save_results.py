@@ -12,6 +12,10 @@ Usage:
 import asyncio
 import json
 import logging
+try:
+    from .pipeline_config import BBB as BBB_CONFIG
+except ImportError:
+    from pipeline_config import BBB as BBB_CONFIG
 import argparse
 import math
 import sys
@@ -128,7 +132,7 @@ async def main(disease: str, top_n: int, output_path: Path) -> None:
                     "ppi_score":               0.0,
                     "escape_bypass_score":     0.0,
                     "bbb_penetrance":          bbb,
-                    "bbb_score":               1.0 if bbb == "HIGH" else (0.6 if bbb == "MODERATE" else 0.2),
+                    "bbb_score":               BBB_CONFIG["penetrance_scores"].get(bbb, BBB_CONFIG["unknown_score"]),
                     "clinical_failure":        False,
                     "targets":                 [],
                     "mechanism":               h.get("mechanism_narrative", ""),

@@ -1,157 +1,194 @@
-# GBM/DIPG Multi-Omic Drug Repurposing Pipeline
+# GBM/DIPG Drug Repurposing Pipeline
 
-A computational drug repurposing framework for pediatric high-grade glioma (DIPG) and glioblastoma (GBM), integrating DepMap CRISPR essentiality, single-cell RNA-seq glioma stem cell profiling, protein-protein interaction networks, and patient genomic cohort data to prioritize drug combinations targeting H3K27M-mutant tumors.
+**A multi-omic computational pipeline for prioritising drug combinations in H3K27M-mutant Diffuse Intrinsic Pontine Glioma (DIPG)**
 
-**Author:** Shruthi Sathya Narayanan — Computer Science, UCLA  
-**GitHub:** [github.com/ShruthiSathya/gbmresearch](https://github.com/ShruthiSathya/gbmresearch)
+> Developed by Shruthi Sathya | v5.4 | March 2026  
+> Preprint: [add bioRxiv DOI once submitted]  
+> Contact: [your email]
 
 ---
 
-## Current Top Hypothesis
+## Overview
 
-**Abemaciclib + Marizomib** (+ third agent from combinatorial screen)
+DIPG is a universally fatal pediatric brainstem cancer with no curative treatment. The H3K27M histone mutation, present in ~80% of cases, fundamentally rewires the epigenetic landscape and creates therapeutic vulnerabilities not present in adult GBM.
 
-| Metric | Value |
-|--------|-------|
-| Priority | HIGH |
-| Confidence | 0.80 |
-| DepMap essentiality (CDK4/6) | 0.93 (Chronos ≤ -1.0 in 52 GBM lines) |
-| BBB penetrance | HIGH (both drugs — curated PK literature) |
-| Target diversity | 1.00 (non-overlapping pathways) |
-| Statistical significance | p = 1.16×10⁻⁴ ✅ |
-| Drugs screened | 557 CNS/Oncology drugs |
-| DIPG patient cohort | 184 samples (PNOC/PBTA, PedcBioPortal) |
+This pipeline integrates five independent data sources to systematically screen 557 CNS/oncology drugs and identify combination hypotheses tailored to the H3K27M molecular context:
 
-### Statistical Finding
+1. **Patient genomics** — 184 PNOC/PBTA DIPG samples (CNA + mutation data)
+2. **Single-cell RNA-seq** — Filbin 2018 H3K27M scRNA-seq, 609 stem-like GSC cells
+3. **CRISPR essentiality** — Broad Institute DepMap, 52 GBM cell lines
+4. **RNA reference cohorts** — GSE50021 (35 DIPG) + GSE115397 (5 H3K27M pons)
+5. **PPI network** — STRING-DB live API + curated fallback
 
-Fisher's exact test (two-sided) on H3K27M mutation vs. CDKN2A deletion co-occurrence in 184 DIPG/pediatric HGG samples (PNOC/PBTA cohort, PedcBioPortal):
+---
 
-| | CDKN2A deleted | CDKN2A WT |
-|---|---|---|
-| **H3K27M+** | 14 | 81 |
-| **H3K27M−** | 36 | 53 |
+## Key Findings
 
-p = 1.16×10⁻⁴ — **significant mutual exclusivity** (not co-occurrence). H3K27M mutation and CDKN2A deletion represent alternative oncogenic mechanisms in this cohort, consistent with Mackay et al. (2017) integrated molecular meta-analysis of 1,000 pediatric HGG samples. The pipeline uses this subgroup structure to stratify drug targeting: epigenetic drugs for H3K27M+ tumors (95/184, 52%), CDK4/6 inhibition for CDKN2A-deleted tumors (50/184, 27%), and combination therapy for the 14-sample double-hit subgroup.
+### Genomic Co-occurrence (n=184 PNOC/PBTA patients)
+
+| Alteration | n | % |
+|-----------|---|---|
+| H3K27M mutation | 95 | 52% |
+| CDKN2A deletion | 50 | 27% |
+| Double-hit (both) | 14 | 7.6% |
+
+Fisher's exact test (one-sided): **p = 1.16×10⁻⁴** — H3K27M and CDKN2A deletion co-occur significantly less than expected by chance, indicating mutual exclusivity and alternative oncogenic mechanisms.
+
+### Top Drug Combination Hypothesis
+
+**Birabresib + Panobinostat + Abemaciclib***
+
+| Drug | Score | BBB | Mechanism |
+|------|-------|-----|-----------|
+| Birabresib | 0.876 | MODERATE | BET bromodomain inhibitor (BRD4) |
+| Panobinostat | 0.851 | HIGH | Pan-HDAC inhibitor |
+| Abemaciclib | 0.823 | HIGH | CDK4/6 inhibitor |
+
+*Adjusted confidence: 0.55 (raw 0.92 × toxicity multiplier 0.60 — HIGH_RISK: 40% combined hematologic AE)*  
+*Toxicity flag: HIGH_RISK (40% combined hematologic AE rate)*  
+**#3 position is weight-sensitive — Marizomib (BBB HIGH, DepMap 1.000) is a co-candidate. Both proposed for wet lab validation.*
+
+### Top 5 Candidates (557 drugs screened)
+
+| Rank | Drug | Score | BBB | DepMap | Tissue | Escape |
+|------|------|-------|-----|--------|--------|--------|
+| 1 | BIRABRESIB | 0.876 | MODERATE | 1.000 | 0.937 | 0.580 |
+| 2 | PANOBINOSTAT | 0.851 | HIGH | 1.000 | 0.929 | 0.472 |
+| 3 | ABEMACICLIB | 0.823 | HIGH | 0.800 | 0.918 | 0.580 |
+| 4 | ONATASERTIB | 0.759 | MODERATE | 1.000 | 0.670 | 0.528 |
+| 5 | AZD-8055 | 0.759 | UNKNOWN | 1.000 | 0.670 | 0.528 |
+| 6 | MARIZOMIB | 0.756 | HIGH | 1.000 | 0.770 | 0.640 |
+
+---
+
+## Figures
+
+![H3K27M vs CDKN2A Co-occurrence](figures/fig1_cooccurrence.png)
+*Figure 1. H3K27M mutation and CDKN2A deletion are mutually exclusive in DIPG (p=1.16e-04, Fisher's exact, n=184). Molecular subgroup stratification defines four treatment populations.*
+
+![Top Drug Candidates](figures/fig2_drug_rankings.png)
+*Figure 2. Top 12 drug candidates by composite score across four weighted components.*
+
+![Score Component Relationships](figures/fig3_score_scatter.png)
+*Figure 3. Score component relationships across top 20 candidates. Colour = BBB penetrance.*
+
+![Confidence Breakdown](figures/fig4_confidence.png)
+*Figure 4. Confidence breakdown for top hypothesis: adjusted confidence = 0.55.*
+
+---
+
+## Pipeline Architecture
+
+```
+save_results.py
+├── data_fetcher.py          ← OpenTargets API (557 drugs)
+├── discovery_pipeline.py    ← orchestrator + RNA loading
+│   ├── tissue_expression.py ← scRNA-seq + curated DIPG scoring
+│   ├── depmap_essentiality  ← Broad CRISPR (52 GBM lines)
+│   ├── escape_bypass        ← resistance pathway scoring
+│   ├── ppi_network.py       ← STRING-DB proximity
+│   ├── bbb_filter.py        ← BBB penetrance + failure penalties
+│   └── hypothesis_generator.py ← combination + toxicity adjustment
+├── pipeline_config.py       ← ALL parameters (single source of truth)
+└── generate_figures.py      ← 4 publication figures
+```
+
+### Composite Scoring Formula
+
+```
+composite_score = 0.40 × tissue_expression      (Filbin 2018 scRNA-seq)
+                + 0.30 × depmap_essentiality     (Broad CRISPR, Behan 2019)
+                + 0.20 × escape_bypass           (RNA-informed resistance)
+                + 0.10 × ppi_network             (STRING-DB proximity)
+
+confidence_adj  = (0.45 × depmap + 0.35 × bbb + 0.20 × diversity)
+                × toxicity_multiplier
+```
+
+Top-2 ranking stable under all ±10% weight perturbations (sensitivity analysis).
 
 ---
 
 ## Data Sources
 
-| Stream | Source | n |
-|--------|--------|---|
-| Drug library | OpenTargets API (EFO_0000519, EFO_0001422, EFO_0000618) | 557 drugs |
-| CRISPR essentiality | DepMap CRISPRGeneEffect.csv (Broad Institute) | 52 GBM cell lines |
-| Stem cell expression | GSE131928 (Neftel et al. 2019, single-cell RNA-seq) | 2,431 GSCs / 16,201 cells |
-| PPI network | STRING-DB (confidence ≥ 800, Homo sapiens) | Live API |
-| Genomic validation | PNOC/PBTA (PedcBioPortal, mutations + CNA + RNA z-scores) | 184 samples |
-
----
-
-## Architecture
-
-```
-OpenTargets API (557 drugs)
-        │
-        ▼
-┌───────────────────────────────────────────────┐
-│              ProductionPipeline               │
-│                                               │
-│  DepMap CRISPR ──────────► depmap_score       │
-│  Single-cell GSC ────────► tissue_expr_score  │
-│  STRING-DB PPI ──────────► ppi_score          │
-│  PNOC/PBTA genomic ──────► Fisher's p-value   │
-│  BBB filter ─────────────► clinical failure   │
-│                            penalty            │
-│                                               │
-│  Composite score → HypothesisGenerator        │
-│  → Abemaciclib + Marizomib (p=1.16e-4)        │
-└───────────────────────────────────────────────┘
-```
-
-### Module Overview
-
-| Module | Function |
-|--------|----------|
-| `data_fetcher.py` | OpenTargets GraphQL pagination, null-safe API handling |
-| `depmap_essentiality.py` | Broad Institute CRISPR Chronos score loading + GBM line filtering |
-| `tissue_expression.py` | Single-cell GSC marker scoring (SOX2, NES, PROM1, CD44) |
-| `ppi_network.py` | STRING-DB live PPI neighbor scoring |
-| `statistical_validator.py` | Fisher's exact test with sentinel value handling (None/NaN/float) |
-| `discovery_pipeline.py` | Main orchestrator — PedcBioPortalValidator + ProductionPipeline |
-| `hypothesis_generator.py` | Externally-grounded confidence scoring (DepMap + BBB + diversity) |
-| `bbb_filter.py` | Blood-brain barrier penetrance + GBM clinical failure penalty |
-| `dipg_specialization.py` | H3K27M/ACVR1-specific scoring bonuses and novelty detection |
-| `calibration.py` | Platt/isotonic score calibration with ECE and AUROC metrics |
-| `trial_outcome_calibrator.py` | Calibrated P(Phase 2 success) from 29 real GBM trial outcomes |
-
----
-
-## Confidence Score Methodology
-
-The pipeline confidence score is **not** derived from the pipeline's own composite score. It is a weighted combination of three externally-grounded signals:
-
-**Confidence = 0.45 × DepMap + 0.35 × BBB + 0.20 × Diversity**
-
-- **DepMap component (0.45 weight):** Median Chronos CRISPR knockout score across 52 GBM cell lines (Broad Institute DepMap). Score 1.0 = Chronos ≤ −1.0 (essential gene); 0.1 = non-essential. External data, not derived from pipeline scoring.
-
-- **BBB component (0.35 weight):** Blood-brain barrier penetrance from curated pharmacokinetic literature (`bbb_filter.py`). HIGH = 1.0, MODERATE = 0.6, LOW = 0.2. External source.
-
-- **Diversity component (0.20 weight):** 1 − mean pairwise Jaccard overlap of drug target sets. 1.0 = completely non-overlapping targets (ideal for combination therapy). Computed, but independent of composite score.
-
-This is a heuristic confidence measure. It is not a validated classifier and does not predict clinical trial success. For calibrated P(Phase 2 success), see `trial_outcome_calibrator.py`, which is trained on 29 published GBM Phase 2 trial outcomes.
-
----
-
-## Limitations
-
-**Active data streams (4):**
-- DepMap CRISPR essentiality (Broad Institute)
-- Single-cell RNA-seq GSC expression (GSE131928)
-- OpenTargets drug-disease associations
-- STRING-DB PPI network
-- PedcBioPortal genomic cohort (PNOC/PBTA, n=184)
-
-**Pending data streams (2):**
-- **CMAP transcriptomic reversal:** architecturally implemented in `cmap_query.py` but requires LINCS L1000 `.gctx` file (~30GB). Download: https://clue.io/data/CMap2020. Until downloaded, CMAP contributes no signal.
-- **Combination synergy:** `synergy_predictor.py` uses biological priors from Grasso et al. 2015 (DIPG4/13 Chou-Talalay logic). Experimental CI data from cell line screens required for validation.
-
-**Wet lab validation required before clinical translation.** The top hypothesis (Abemaciclib + Marizomib) requires at minimum: IC50 curves in DIPG cell lines (DIPG4, DIPG13, SU-DIPG-VI), Chou-Talalay combination index assays, and ideally xenograft mouse model data.
+| Source | Description | n | Access |
+|--------|-------------|---|--------|
+| PNOC/PBTA | Patient CNA + mutation | 184 samples | Cavatica (controlled) |
+| GSE102130 | Filbin 2018 H3K27M scRNA-seq | 4,058 cells | GEO (open) |
+| GSE50021 | Grasso 2015 DIPG microarray | 35 DIPG + 10 normal | GEO (open) |
+| GSE115397 | Nagaraja 2018 RNA-seq | 5 DIPG + 3 normal | GEO (open) |
+| DepMap 23Q4 | Broad CRISPR essentiality | 52 GBM lines | depmap.org (open) |
+| OpenTargets | Drug-target associations | 557 drugs | API (open) |
+| STRING-DB v11.5 | PPI network | genome-wide | API (open) |
 
 ---
 
 ## Installation
 
 ```bash
-git clone https://github.com/ShruthiSathya/gbmresearch
+git clone https://github.com/ShruthiSathya/gbmresearch.git
 cd gbmresearch
-pip install -r requirements.txt
+pip install pandas numpy scipy matplotlib requests
 ```
 
-**Required data files** (not included — download separately):
-
+**Data placement:**
 ```
-data/raw_omics/
-  CRISPRGeneEffect.csv     # DepMap — https://depmap.org/portal/download/all/
-  Model.csv                # DepMap
-  GSM3828673_10X_GBM_IDHwt_processed_TPM.tsv  # GEO GSE131928
-
-data/validation/cbtn_genomics/
-  mutations.txt            # PedcBioPortal PNOC/PBTA — Transposed Matrix format
-  cna.txt
-  rna_zscores.txt
+data/
+  raw_omics/GSE102130_K27Mproject.RSEM.vh20170621.txt   # Filbin scRNA-seq
+  depmap/CRISPRGeneEffect.csv                            # Broad DepMap
+  depmap/Model.csv
+  validation/cbtn_genomics/mutations.txt                 # PNOC/PBTA (controlled)
+  validation/cbtn_genomics/cna.txt
+  validation/cbtn_genomics/rna_zscores.txt               # Processed RNA (included)
 ```
 
 **Run:**
 ```bash
-python3 -m backend.pipeline.testing
+python -m backend.pipeline.save_results
+python -m backend.pipeline.generate_figures
 ```
 
 ---
 
-## Key References
+## Limitations
 
-- Mackay A et al. (2017). Integrated Molecular Meta-Analysis of 1,000 Pediatric High-Grade and Diffuse Intrinsic Pontine Glioma. *Cancer Cell.* doi:10.1016/j.ccell.2017.08.017
-- Neftel C et al. (2019). An Integrative Model of Cellular States, Plasticity, and Genetics for Glioblastoma. *Cell.* doi:10.1016/j.cell.2019.06.024
-- Grasso CS et al. (2015). Functionally defined therapeutic targets in diffuse intrinsic pontine glioma. *Nature Medicine.* doi:10.1038/nm.3855
-- Wu G et al. (2012). Somatic histone H3 alterations in pediatric diffuse intrinsic pontine gliomas. *Nature Genetics.* doi:10.1038/ng.1102
-- Meyers RM et al. (2017). Computational correction of copy number effect improves specificity of CRISPR-Cas9 essentiality screens in cancer cells. *Nature Genetics.*
+1. **Cohort mismatch** — genomics (PNOC/PBTA) and RNA reference (GSE50021 + GSE115397) are separate cohorts; cross-cohort use justified by shared H3K27M DIPG context
+2. **No experimental validation** — hypothesis generation only; cell line and in vivo experiments required
+3. **#3 ranking weight-sensitive** — Abemaciclib and Marizomib are co-candidates (score gap 0.058); both proposed for wet lab testing
+4. **Composite weights** — rationale-based hierarchy, not empirically derived; sensitivity analysis confirms top-2 stability
+
+---
+
+## Proposed Wet Lab Validation
+
+Minimum experiment set to test the top hypothesis:
+
+1. **Cell viability** — SU-DIPG-IV, SU-DIPG-XIII at 72h (CTG assay); triple combo vs individual drugs
+2. **Synergy** — Bliss independence model, 5×5 dose matrix per drug pair
+3. **Target engagement** — Western: BRD4↓ (Birabresib), H3K27ac↑ (Panobinostat), pRb↓ (Abemaciclib)
+4. **H3K27M specificity** — compare H3K27M+ vs H3K27M− isogenic lines
+
+---
+
+## Citation
+
+```
+Sathya, S. (2026). Multi-omic drug repurposing pipeline for H3K27M DIPG
+identifies Birabresib + Panobinostat + Abemaciclib as a priority triple combination.
+[Preprint]. bioRxiv. doi: [add once submitted]
+```
+
+Primary data citations: Filbin et al. 2018 (*Science*), Grasso et al. 2015 (*Nature Medicine*),
+Behan et al. 2019 (*Nature*), Monje et al. 2023 (*Nature Medicine*).
+
+Full reference list: see [REFERENCES.md](REFERENCES.md)
+
+---
+
+## License
+
+MIT License. Data sources subject to their own access agreements.
+
+---
+
+*Shruthi Sathya Narayanan| [@ShruthiSathya](https://github.com/ShruthiSathya)*

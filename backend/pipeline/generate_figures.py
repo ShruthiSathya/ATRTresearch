@@ -6,6 +6,10 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+try:
+    from .pipeline_config import COMPOSITE_WEIGHTS, CONFIDENCE_WEIGHTS
+except ImportError:
+    from pipeline_config import COMPOSITE_WEIGHTS, CONFIDENCE_WEIGHTS
 import matplotlib.patches as mpatches
 import numpy as np
 
@@ -166,10 +170,10 @@ def fig2_drug_rankings(data: dict, top_n: int = 12) -> None:
     top = candidates[:top_n]
     drugs   = [c["name"] for c in top]
     comps   = {
-        "Tissue/GSC (40%)":    [c.get("tissue_expression_score", 0) * 0.40 for c in top],
-        "DepMap CRISPR (30%)": [c.get("depmap_score",            0) * 0.30 for c in top],
-        "Escape bypass (20%)": [c.get("escape_bypass_score",     0) * 0.20 for c in top],
-        "PPI network (10%)":   [c.get("ppi_score",               0) * 0.10 for c in top],
+        "Tissue/GSC ({:.0f}%)".format(COMPOSITE_WEIGHTS["tissue"]*100):    [c.get("tissue_expression_score", 0) * COMPOSITE_WEIGHTS["tissue"] for c in top],
+        "DepMap CRISPR ({:.0f}%)".format(COMPOSITE_WEIGHTS["depmap"]*100): [c.get("depmap_score",            0) * COMPOSITE_WEIGHTS["depmap"] for c in top],
+        "Escape bypass ({:.0f}%)".format(COMPOSITE_WEIGHTS["escape"]*100): [c.get("escape_bypass_score",     0) * COMPOSITE_WEIGHTS["escape"] for c in top],
+        "PPI network ({:.0f}%)".format(COMPOSITE_WEIGHTS["ppi"]*100):   [c.get("ppi_score",               0) * COMPOSITE_WEIGHTS["ppi"] for c in top],
     }
     composite  = [c.get("score", 0) for c in top]
     bbb_status = [c.get("bbb_penetrance", "UNKNOWN") for c in top]
@@ -219,9 +223,9 @@ def fig2_drug_rankings(data: dict, top_n: int = 12) -> None:
     cb = data.get("confidence_breakdown")
     if cb and composite:
         combo = cb.get("drug_combo", "")
-        conf  = cb.get("confidence", 0)
+        conf_adj = cb.get("confidence_adjusted", cb.get("confidence", 0))
         ax2.annotate(
-            f"{combo}\nConf: {conf:.2f}",
+            f"{combo}\nConf: {conf_adj:.2f}",
             xy=(0, composite[0]),
             xytext=(min(2, len(drugs) - 1), 1.02),
             fontsize=8.5, color=RED_ACCENT,
@@ -276,9 +280,8 @@ def fig3_score_scatter(data: dict) -> None:
         return
 
     fig, axes = plt.subplots(1, 3, figsize=(16, 5.5))
-    n_shown = len(candidates)
-    n_total = data.get("stats", {}).get("n_drugs_screened", n_shown)
-    fig.suptitle(f"Score Component Relationships — Top {n_shown} of {n_total} Screened Candidates", fontsize=13, fontweight="bold")
+    fig.suptitle("Score Component Relationships — All Screened Candidates",
+                 fontsize=13, fontweight="bold")
 
     pairs = [
         ("depmap_score", "tissue_expression_score", "DepMap CRISPR",  "Single-cell GSC"),
@@ -339,20 +342,29 @@ def fig3_score_scatter(data: dict) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fig4_confidence(data: dict) -> None:
-    cb = data.get("confidence_breakdown")
+    # Full confidence data lives in hypotheses[0].confidence_breakdown
+    # Top-level confidence_breakdown is a legacy summary — missing raw/tox fields
+    hyps   = data.get("hypotheses", [])
+    cb_top = data.get("confidence_breakdown", {})
+    cb     = hyps[0].get("confidence_breakdown", cb_top) if hyps else cb_top
     if not cb:
         print("  fig4 skipped — no confidence_breakdown in results")
         return
 
-    dep_raw = cb.get("depmap_essentiality", 0)
-    bbb_raw = cb.get("bbb_penetrance", 0)
-    div_raw = cb.get("mechanistic_diversity", 0)
-    conf    = cb.get("confidence", 0)
-    combo   = cb.get("drug_combo", "Top hypothesis")
-    priority= cb.get("priority", "")
-    p_sig   = cb.get("statistical_significance", "")
+    dep_raw  = cb.get("depmap_essentiality", 0)
+    bbb_raw  = cb.get("bbb_penetrance", 0)
+    div_raw  = cb.get("mechanistic_diversity", 0)
+    conf_adj = cb.get("confidence_adjusted", cb.get("confidence", 0))
+    conf_raw = cb.get("confidence_raw", conf_adj)
+    tox_mult = cb.get("toxicity_multiplier", 1.0)
+    tox_flag = cb.get("toxicity_flag", "")
+    # combo/priority/p_sig may be on hypothesis root or cb_top
+    hyp0     = hyps[0] if hyps else {}
+    combo    = cb_top.get("drug_combo") or hyp0.get("drug_or_combo", "Top hypothesis")
+    priority = cb_top.get("priority") or hyp0.get("priority", "")
+    p_sig    = cb_top.get("statistical_significance") or                hyp0.get("statistical_significance", "")
 
-    dep_w, bbb_w, div_w = dep_raw * 0.45, bbb_raw * 0.35, div_raw * 0.20
+    dep_w, bbb_w, div_w = dep_raw * CONFIDENCE_WEIGHTS['depmap'], bbb_raw * CONFIDENCE_WEIGHTS['bbb'], div_raw * CONFIDENCE_WEIGHTS['diversity']
     total = dep_w + bbb_w + div_w
 
     p_sig_clean = p_sig.replace("✅", "").strip()
@@ -360,14 +372,14 @@ def fig4_confidence(data: dict) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
     fig.suptitle(
         f"{combo}  —  Confidence Breakdown\n"
-        f"Confidence = {conf:.2f}  •  Priority: {priority}  •  {p_sig_clean}",
+        f"Adjusted confidence = {conf_adj:.2f}  (raw {conf_raw:.2f} x tox {tox_mult:.2f} — {tox_flag})  •  Priority: {priority}  •  {p_sig_clean}",
         fontsize=12, fontweight="bold", y=1.02,
     )
 
     ax = axes[0]
-    comp_labels = ["DepMap\nEssentiality\n(x0.45)",
-                   "BBB\nPenetrance\n(x0.35)",
-                   "Target\nDiversity\n(x0.20)"]
+    comp_labels = [f"DepMap\nEssentiality\n(x{CONFIDENCE_WEIGHTS['depmap']})",
+                   f"BBB\nPenetrance\n(x{CONFIDENCE_WEIGHTS['bbb']})",
+                   f"Target\nDiversity\n(x{CONFIDENCE_WEIGHTS['diversity']})"]
     raw_vals   = [dep_raw, bbb_raw, div_raw]
     weighted   = [dep_w,   bbb_w,   div_w]
     bar_colors = [UCLA_BLUE, UCLA_GOLD, GREEN_ACCENT]
@@ -414,15 +426,15 @@ def fig4_confidence(data: dict) -> None:
 
         y = np.arange(len(names))
         h = 0.55
-        ax2.barh(y, [d * 0.30 for d in dep], h, color=UCLA_GOLD,    label="DepMap (30%)")
-        ax2.barh(y, [t * 0.40 for t in tis], h,
-                 left=[d * 0.30 for d in dep],
-                 color=UCLA_BLUE, label="Tissue/GSC (40%)")
-        left2 = [d * 0.30 + t * 0.40 for d, t in zip(dep, tis)]
-        ax2.barh(y, [e * 0.20 for e in esc], h,
+        ax2.barh(y, [d * COMPOSITE_WEIGHTS["depmap"] for d in dep], h, color=UCLA_GOLD, label=f'DepMap ({COMPOSITE_WEIGHTS["depmap"]*100:.0f}%)')
+        ax2.barh(y, [t * COMPOSITE_WEIGHTS["tissue"] for t in tis], h,
+                 left=[d * COMPOSITE_WEIGHTS["depmap"] for d in dep],
+                 color=UCLA_BLUE, label=f'Tissue/GSC ({COMPOSITE_WEIGHTS["tissue"]*100:.0f}%)')
+        left2 = [d * COMPOSITE_WEIGHTS["depmap"] + t * COMPOSITE_WEIGHTS["tissue"] for d, t in zip(dep, tis)]
+        ax2.barh(y, [e * COMPOSITE_WEIGHTS["escape"] for e in esc], h,
                  left=left2, color=GREEN_ACCENT, label="Escape (20%)")
-        left3 = [l + e * 0.20 for l, e in zip(left2, esc)]
-        ax2.barh(y, [p * 0.10 for p in ppi], h,
+        left3 = [l + e * COMPOSITE_WEIGHTS["escape"] for l, e in zip(left2, esc)]
+        ax2.barh(y, [p * COMPOSITE_WEIGHTS["ppi"] for p in ppi], h,
                  left=left3, color=PURPLE, label="PPI (10%)")
 
         ax2.set_yticks(y)

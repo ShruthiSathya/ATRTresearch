@@ -2,7 +2,7 @@
 GBM/DIPG Drug Repurposing Pipeline — save_results.py
   disease  : dipg
   top_n    : 20
-  timestamp: 2026-03-07 22:41:41
+  timestamp: 2026-03-11 10:14:39
 =================================================================
 ✅ CMAP Query Engine Initialized (Real Data Mode)
 ✅ PPI Network Module Initialized (Live STRING-DB + Curated Fallback)
@@ -18,13 +18,13 @@ BBB Filter initialized (MW limit: 800.0 Da)
 Detected transposed genomic format (gene columns: study_id, pbta_all...). Parsing as sample×gene matrix.
 Transposed format: found 95 H3K27M (K28M) samples out of 184 total
 CDKN2A: 50 samples with deletion (score ≤ -1), 6 with deep deletion (score = -2)
-RNA: 1 genes upregulated (z-score > 2.0) in H3K27M samples
+RNA (reference cohort mode): 1513 genes upregulated (value > 1.0) in 5 H3K27M reference samples (DIPG_GSE50021_1, DIPG_GSE50021_2, DIPG_GSE50021_3...) from 26976-gene matrix. Normal columns excluded: ['Normal_ref_1', 'Normal_ref_2']
 Co-occurrence: H3K27M=95, CDKN2A-del=50, overlap=14, total=184
 Contingency table → H3K27M+/CDKN2A-del: a=14, b=81, c=36, d=53
 📊 Fisher's exact test: p = 1.1572e-04 (H3K27M+CDKN2A-del co-occurrence; one-sided, n=184)
-⏳ Loading Single-Cell GBM Matrix... (This takes a moment)
-✅ Single-Cell loaded: 2431 stem-like cells / 16201 total. GSC expression p25=0.00, p50=0.65, p75=14.45, p90=50.37
-✅ Tissue scoring: 557 candidates | 25 unique scores | range=[0.30, 0.93] | distinct values=[0.3, 0.33, 0.35, 0.38, 0.4, 0.55, 0.56, 0.58]
+⏳ Loading Single-Cell H3K27M DIPG Matrix (Filbin 2018)...
+✅ Single-Cell loaded: 609 stem-like cells / 4058 total. GSC expression p25=0.41, p50=6.64, p75=28.98, p90=76.17
+✅ Tissue scoring: 557 candidates | 27 unique scores | range=[0.23, 0.94] | distinct values=[0.23, 0.27, 0.31, 0.34, 0.38, 0.4, 0.47, 0.48]
 ⏳ Loading massive DepMap CRISPR dataset into memory...
 OncotreeSubtype filter ('OncotreeSubtype'): matched 72 cell lines
 Loading CRISPRGeneEffect.csv (this is large — may take 30-60s)...
@@ -32,6 +32,7 @@ DepMap cell line matching: 72 found in Model.csv, 52 present in CRISPRGeneEffect
 ✅ DepMap loaded: 52 cell lines, 18435 gene scores computed
 ✅ PPI scoring: 557 candidates | distribution: {1.0: 33, 0.85: 28, 0.6: 6, 0.2: 490}
 BBB filter: penalised 19 known GBM clinical trial failures
+🧪 Toxicity — BIRABRESIB + PANOBINOSTAT + ABEMACICLIB: 40.0% (HIGH_RISK), multiplier=0.600
 
 ── pipeline.run() returned keys: ['hypotheses', 'top_candidates', 'stats']
 ── found 20 candidates in top_candidates
@@ -52,10 +53,10 @@ Next step: python -m backend.pipeline.generate_figures
 
 ── Top 5 candidates ────────────────────────────────
   Drug                       Score  BBB       
-  BIRABRESIB                 0.871  MODERATE  
-  PANOBINOSTAT               0.867  HIGH      
-  ONATASERTIB                0.827  MODERATE  
-  AZD-8055                   0.827  UNKNOWN   
-  CC-115                     0.812  UNKNOWN   
+  BIRABRESIB                 0.876  MODERATE  
+  PANOBINOSTAT               0.851  HIGH      
+  ABEMACICLIB                0.823  HIGH      
+  ONATASERTIB                0.759  MODERATE  
+  AZD-8055                   0.759  UNKNOWN   
 
   Total drugs screened (OpenTargets): 557

@@ -2,106 +2,106 @@ import logging
 import math
 from typing import Dict, List, Optional
 
-logger = logging.getLogger(__name__)
+from .toxicity_constraint import combination_toxicity_penalty
+from .pipeline_config import (
+    CONFIDENCE_WEIGHTS,
+    DEPMAP_MISSING_PRIOR,
+    BBB as BBB_CONFIG,
+    HYPOTHESIS as HYP_CONFIG,
+)
 
-# BBB penetrance → numeric score (from curated pharmacokinetic literature)
-BBB_SCORES = {
-    "HIGH":     1.0,
-    "MODERATE": 0.6,
-    "LOW":      0.2,
-    "UNKNOWN":  0.5,   # neutral — we don't penalise what we don't know
-}
+logger = logging.getLogger(__name__)
 
 
 def _compute_externally_grounded_confidence(top_3: List[Dict]) -> Dict:
     """
-    Compute confidence from three externally-grounded signals.
+    Compute confidence from three externally-grounded signals,
+    then apply toxicity penalty multiplier.
 
-    Returns dict with:
-        confidence       : float — final 0–1 confidence score
-        depmap_component : float — from Broad CRISPR data
-        bbb_component    : float — from pharmacokinetic literature
-        diversity_component : float — target independence
-        explanation      : str  — what each component means
+    Weights are read from pipeline_config.CONFIDENCE_WEIGHTS.
+    No magic numbers in this function.
     """
     if not top_3:
-        return {"confidence": 0.0, "explanation": "No candidates"}
+        return {"confidence": 0.0, "confidence_raw": 0.0, "explanation": "No candidates"}
 
-    # ── Component A: DepMap essentiality (Broad CRISPR — external) ────────────
-    # depmap_score is loaded from CRISPRGeneEffect.csv (Broad Institute).
-    # Score of 1.0 = knockout kills GBM cells (Chronos ≤ -1.0)
-    # Score of 0.5 = default when DepMap data not loaded
-    # Score of 0.1 = gene non-essential in GBM lines
-    depmap_scores = [c.get("depmap_score", 0.1) for c in top_3]
+    cw = CONFIDENCE_WEIGHTS   # shorthand
+
+    # ── Component A: DepMap CRISPR essentiality (Broad Institute) ─────────────
+    depmap_scores    = [c.get("depmap_score", HYP_CONFIG["missing_depmap_score"]) for c in top_3]
     depmap_component = sum(depmap_scores) / len(depmap_scores)
 
-    # Penalise if all three are at the 0.5 default — means DepMap wasn't loaded
-    all_default = all(abs(s - 0.5) < 0.01 for s in depmap_scores)
+    default_score = HYP_CONFIG["depmap_default_score"]
+    tolerance     = HYP_CONFIG["depmap_default_tolerance"]
+    all_default   = all(abs(s - default_score) < tolerance for s in depmap_scores)
     if all_default:
-        depmap_component = 0.3   # Reduced — external data not available
+        depmap_component = DEPMAP_MISSING_PRIOR
         depmap_note = "DepMap data not loaded (CRISPRGeneEffect.csv missing) — using prior"
     else:
-        depmap_note = f"Broad CRISPR Chronos scores: {[round(s,2) for s in depmap_scores]}"
+        depmap_note = f"Broad CRISPR Chronos scores: {[round(s, 2) for s in depmap_scores]}"
 
-    # ── Component B: BBB penetrance (pharmacokinetic literature — external) ──
-    # From curated database in bbb_filter.py (clinical PK studies)
-    bbb_cats   = [c.get("bbb_penetrance", "UNKNOWN") for c in top_3]
-    bbb_scores = [BBB_SCORES.get(cat, 0.5) for cat in bbb_cats]
+    # ── Component B: BBB penetrance (curated PK literature) ───────────────────
+    penetrance_scores = BBB_CONFIG["penetrance_scores"]
+    bbb_cats      = [c.get("bbb_penetrance", "UNKNOWN") for c in top_3]
+    bbb_scores    = [penetrance_scores.get(cat, penetrance_scores["UNKNOWN"]) for cat in bbb_cats]
     bbb_component = sum(bbb_scores) / len(bbb_scores)
-    bbb_note = f"BBB penetrance: {list(zip([c.get('name','?') for c in top_3], bbb_cats))}"
-
-    # ── Component C: Mechanistic diversity (target independence) ──────────────
-    # Are the three drugs attacking truly distinct biological nodes?
-    # This is computed from actual targets — not circular with the score.
-    all_target_sets = [set(c.get("targets", [])) for c in top_3]
-    pairwise_overlaps = []
-    for i in range(len(all_target_sets)):
-        for j in range(i + 1, len(all_target_sets)):
-            a, b = all_target_sets[i], all_target_sets[j]
-            if a or b:
-                overlap = len(a & b) / max(len(a | b), 1)
-                pairwise_overlaps.append(overlap)
-
-    # diversity = 1 - average pairwise Jaccard overlap
-    # 1.0 = completely disjoint targets (ideal for combination)
-    # 0.0 = completely overlapping targets (redundant combination)
-    avg_overlap = sum(pairwise_overlaps) / max(len(pairwise_overlaps), 1)
-    diversity_component = 1.0 - avg_overlap
-    diversity_note = f"Target Jaccard overlap: {round(avg_overlap, 3)} (lower = more diverse)"
-
-    # ── Weighted combination ──────────────────────────────────────────────────
-    # DepMap essentiality weighted highest (strongest external validation)
-    # BBB penetrance is binary requirement — heavily weighted
-    # Diversity is important but can be satisfied multiple ways
-    confidence = (
-        depmap_component   * 0.45
-        + bbb_component    * 0.35
-        + diversity_component * 0.20
+    bbb_note = (
+        f"BBB penetrance: "
+        f"{ list(zip([c.get('name', '?') for c in top_3], bbb_cats)) }"
     )
-    confidence = round(min(1.0, max(0.0, confidence)), 4)
+
+    # ── Component C: Mechanistic diversity (target Jaccard) ───────────────────
+    all_target_sets   = [set(c.get("targets", [])) for c in top_3]
+    pairwise_overlaps = [
+        len(a & b) / max(len(a | b), 1)
+        for i, a in enumerate(all_target_sets)
+        for j, b in enumerate(all_target_sets)
+        if i < j and (a or b)
+    ]
+    avg_overlap         = sum(pairwise_overlaps) / max(len(pairwise_overlaps), 1)
+    diversity_component = 1.0 - avg_overlap
+    diversity_note      = f"Target Jaccard overlap: {round(avg_overlap, 3)} (lower = more diverse)"
+
+    # ── Raw confidence (pre-toxicity) ─────────────────────────────────────────
+    confidence_raw = round(min(1.0, max(0.0,
+        depmap_component    * cw["depmap"]
+        + bbb_component     * cw["bbb"]
+        + diversity_component * cw["diversity"]
+    )), 4)
+
+    # ── Toxicity penalty (single call — not duplicated in discovery_pipeline) ─
+    drug_names = [c.get("drug_name", c.get("name", "UNKNOWN")).upper() for c in top_3]
+    tox_result = combination_toxicity_penalty(drug_names)
+    multiplier = tox_result["multiplier"]
+
+    confidence_final = round(confidence_raw * multiplier, 4)
 
     return {
-        "confidence":            confidence,
-        "depmap_component":      round(depmap_component, 4),
-        "bbb_component":         round(bbb_component, 4),
-        "diversity_component":   round(diversity_component, 4),
-        "depmap_note":           depmap_note,
-        "bbb_note":              bbb_note,
-        "diversity_note":        diversity_note,
+        "confidence":          confidence_final,
+        "confidence_raw":      confidence_raw,
+        "depmap_component":    round(depmap_component, 4),
+        "bbb_component":       round(bbb_component, 4),
+        "diversity_component": round(diversity_component, 4),
+        "toxicity_multiplier": multiplier,
+        "toxicity_flag":       tox_result["flag"],
+        "toxicity_note":       tox_result["note"],
+        "depmap_note":         depmap_note,
+        "bbb_note":            bbb_note,
+        "diversity_note":      diversity_note,
         "explanation": (
-            f"Confidence = 0.45×DepMap({depmap_component:.2f}) "
-            f"+ 0.35×BBB({bbb_component:.2f}) "
-            f"+ 0.20×Diversity({diversity_component:.2f}) = {confidence:.2f}. "
-            f"DepMap: {depmap_note}. "
-            f"BBB: {bbb_note}. "
-            f"Diversity: {diversity_note}."
+            f"Raw = {cw['depmap']}×DepMap({depmap_component:.2f}) "
+            f"+ {cw['bbb']}×BBB({bbb_component:.2f}) "
+            f"+ {cw['diversity']}×Diversity({diversity_component:.2f}) = {confidence_raw:.2f}. "
+            f"Toxicity multiplier = {multiplier:.3f} ({tox_result['flag']}). "
+            f"Adjusted = {confidence_raw:.2f} × {multiplier:.3f} = {confidence_final:.2f}. "
+            f"{tox_result['note']}"
         ),
     }
 
 
 class HypothesisGenerator:
     """
-    v5.2: Unbiased hypothesis assembly with externally-grounded confidence scoring.
+    v5.4: Hypothesis assembly with externally-grounded, toxicity-adjusted
+    confidence scoring. All weights read from pipeline_config.
     """
 
     def __init__(self):
@@ -109,65 +109,57 @@ class HypothesisGenerator:
 
     def generate(
         self,
-        candidates:       List[Dict],
-        cmap_results:     List[Dict],
-        synergy_combos:   List[Dict],
+        candidates:        List[Dict],
+        cmap_results:      List[Dict],
+        synergy_combos:    List[Dict],
         differential_cmap: List[Dict],
-        genomic_stats:    Optional[Dict] = None,
-        p_value:          Optional[float] = None,   # None = no data, nan = insufficient
+        genomic_stats:     Optional[Dict] = None,
+        p_value:           Optional[float] = None,
     ) -> List[Dict]:
 
-        hypotheses = []
-        sorted_candidates = sorted(
-            candidates, key=lambda x: x.get("score", 0), reverse=True
-        )
-
+        sorted_candidates = sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)
         if len(sorted_candidates) < 3:
-            return hypotheses
+            return []
 
-        # Enforce target diversity — pick drugs with non-overlapping targets
-        top_3:            List[Dict] = []
-        covered_targets:  set        = set()
+        # Select top 3 with non-overlapping targets
+        top_3:           List[Dict] = []
+        covered_targets: set        = set()
 
         for c in sorted_candidates:
             c_targets = set(c.get("targets", []))
             if not c_targets.intersection(covered_targets):
                 top_3.append(c)
                 covered_targets.update(c_targets)
-            if len(top_3) == 3:
+            if len(top_3) == HYP_CONFIG["combo_size"]:
                 break
 
         if len(top_3) < 3:
-            top_3 = sorted_candidates[:3]   # fallback
+            top_3 = sorted_candidates[:3]
 
-        # ── Externally-grounded confidence (FIXED — no longer circular) ───────
         confidence_data = _compute_externally_grounded_confidence(top_3)
 
-        # ── p-value handling (FIXED — no longer reports 1.0 for missing data) ─
-        import math as _math
+        # p-value handling
         p_value_is_valid = (
             p_value is not None
-            and not _math.isnan(p_value)
-            and _math.isfinite(p_value)
+            and not math.isnan(p_value)
+            and math.isfinite(p_value)
         )
 
         if p_value is None:
             p_str    = "N/A — genomic validation data not loaded"
             priority = "COMPUTATIONAL"
-        elif _math.isnan(p_value):
+        elif math.isnan(p_value):
             p_str    = "N/A — sample counts insufficient for Fisher's exact test"
             priority = "COMPUTATIONAL"
-        elif p_value < 0.05:
+        elif p_value < HYP_CONFIG["p_value_significance"]:
             p_str    = f"{p_value:.2e} ✅"
             priority = "HIGH"
         else:
             p_str    = f"{p_value:.4f} (not significant)"
             priority = "MODERATE"
 
-        # Combo name and targets
         combo_name = " + ".join([
-            c.get("drug_name", c.get("name", "Unknown")).upper()
-            for c in top_3
+            c.get("drug_name", c.get("name", "Unknown")).upper() for c in top_3
         ])
         combo_targets = []
         for c in top_3:
@@ -177,42 +169,46 @@ class HypothesisGenerator:
         triple_hit = {
             "drug_or_combo": combo_name,
             "priority":      priority,
-
-            # FIXED: externally-grounded confidence with breakdown
             "confidence":    confidence_data["confidence"],
             "confidence_breakdown": {
+                "confidence_raw":        confidence_data["confidence_raw"],
+                "confidence_adjusted":   confidence_data["confidence"],
                 "depmap_essentiality":   confidence_data["depmap_component"],
                 "bbb_penetrance":        confidence_data["bbb_component"],
                 "mechanistic_diversity": confidence_data["diversity_component"],
+                "toxicity_multiplier":   confidence_data["toxicity_multiplier"],
+                "toxicity_flag":         confidence_data["toxicity_flag"],
+                "toxicity_note":         confidence_data["toxicity_note"],
+                "weights_used": {
+                    "depmap":    CONFIDENCE_WEIGHTS["depmap"],
+                    "bbb":       CONFIDENCE_WEIGHTS["bbb"],
+                    "diversity": CONFIDENCE_WEIGHTS["diversity"],
+                },
                 "method": (
                     "Weighted combination of: "
-                    "(1) DepMap CRISPR Chronos essentiality scores (Broad Institute), "
-                    "(2) Blood-brain barrier penetrance (curated PK literature), "
-                    "(3) Target Jaccard diversity (independent pathway coverage). "
-                    "NOT derived from the pipeline's own composite score."
+                    "(1) DepMap CRISPR Chronos essentiality (Broad Institute), "
+                    "(2) BBB penetrance (curated PK literature), "
+                    "(3) Target Jaccard diversity. "
+                    "v5.4: multiplied by hematologic toxicity penalty from Phase I AE data."
                 ),
             },
             "confidence_explanation": confidence_data["explanation"],
-
-            "supporting_streams":    ["Multi-Omic Integration"],
-            "target_context":        f"Multi-node blockade targeting {target_str}",
+            "supporting_streams":     ["Multi-Omic Integration"],
+            "target_context":         f"Multi-node blockade targeting {target_str}",
             "mechanism_narrative": (
                 "Computationally derived synergistic combination. "
                 "Selected for mechanism diversity, network proximity, and stem-cell eradication."
             ),
-
-            # FIXED: p-value correctly reported
             "statistical_significance": p_str,
             "statistical_note": (
-                "Fisher's exact test for H3K27M/CDKN2A-del co-occurrence in CBTN cohort. "
-                "Requires data/validation/cbtn_genomics/ files to be populated."
-                if not p_value_is_valid
-                else "Fisher's exact test for H3K27M/CDKN2A-del co-occurrence."
+                "Fisher's exact test for H3K27M/CDKN2A-del co-occurrence in CBTN cohort."
+                if p_value_is_valid
+                else "Requires data/validation/cbtn_genomics/ files to be populated."
             ),
-
             "bypass_status": (
                 "HIGH"
-                if all(c.get("escape_bypass_score", 0) > 0.5 for c in top_3)
+                if all(c.get("escape_bypass_score", 0) > HYP_CONFIG["bypass_high_threshold"]
+                       for c in top_3)
                 else "MODERATE"
             ),
         }
@@ -223,28 +219,28 @@ class HypothesisGenerator:
                 f"({genomic_stats['prevalence']:.1%} prevalence)"
             )
 
-        hypotheses.append(triple_hit)
-        return hypotheses
+        return [triple_hit]
 
     def generate_report(self, hypotheses: List[Dict]) -> str:
-        lines = ["# GBM/DIPG Unbiased Discovery Report v5.2\n"]
+        lines = ["# GBM/DIPG Unbiased Discovery Report v5.4\n"]
         for h in hypotheses:
-            lines.append(f"## {h['drug_or_combo']}")
-            lines.append(f"- **Priority:** {h['priority']}")
-            lines.append(f"- **Confidence:** {h['confidence']:.2f}")
+            bd   = h.get("confidence_breakdown", {})
+            raw  = bd.get("confidence_raw", 0)
+            adj  = bd.get("confidence_adjusted", 0)
+            mult = bd.get("toxicity_multiplier", 1)
+            flag = bd.get("toxicity_flag", "?")
+            wts  = bd.get("weights_used", CONFIDENCE_WEIGHTS)
 
-            # Show confidence breakdown
-            breakdown = h.get("confidence_breakdown", {})
-            if breakdown:
-                lines.append(f"  - DepMap essentiality: {breakdown.get('depmap_essentiality', '?'):.2f}")
-                lines.append(f"  - BBB penetrance:      {breakdown.get('bbb_penetrance', '?'):.2f}")
-                lines.append(f"  - Target diversity:    {breakdown.get('mechanistic_diversity', '?'):.2f}")
-                lines.append(f"  - *{breakdown.get('method', '')}*")
-
-            lines.append(f"- **Targets:** {h['target_context']}")
-            lines.append(f"- **Statistical Significance:** {h.get('statistical_significance', 'N/A')}")
-            if h.get("statistical_note"):
-                lines.append(f"  - *{h['statistical_note']}*")
-            lines.append(f"- **Mechanism:** {h['mechanism_narrative']}\n")
-
+            lines += [
+                f"## {h['drug_or_combo']}",
+                f"- **Priority:** {h['priority']}",
+                f"- **Confidence (adjusted):** {adj:.2f}  *(raw: {raw:.2f} × tox: {mult:.3f} — {flag})*",
+                f"  - DepMap essentiality (w={wts.get('depmap', '?')}): {bd.get('depmap_essentiality', 0):.2f}",
+                f"  - BBB penetrance     (w={wts.get('bbb', '?')}): {bd.get('bbb_penetrance', 0):.2f}",
+                f"  - Target diversity   (w={wts.get('diversity', '?')}): {bd.get('mechanistic_diversity', 0):.2f}",
+                f"  - Toxicity note: {bd.get('toxicity_note', '')}",
+                f"- **Targets:** {h['target_context']}",
+                f"- **Statistical Significance:** {h.get('statistical_significance', 'N/A')}",
+                f"- **Mechanism:** {h['mechanism_narrative']}\n",
+            ]
         return "\n".join(lines)

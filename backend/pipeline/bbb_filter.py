@@ -1,46 +1,50 @@
 import logging
 from typing import Dict, List, Tuple, Optional
 
+from .pipeline_config import BBB as BBB_CONFIG
+
 logger = logging.getLogger(__name__)
 
+
 KNOWN_BBB_PENETRANCE: Dict[str, str] = {
-    # ── HIGH — cross BBB reliably (clinical PK data) ──────────────────────────
+    # ── HIGH ──────────────────────────────────────────────────────────────────
     "temozolomide":   "HIGH",
     "onc201":         "HIGH",
-    "panobinostat":   "HIGH",    # Confirmed CNS exposure; DIPG trials (Monje lab)
-    "abemaciclib":    "HIGH",    # Specifically selected for CNS penetrance vs palbociclib
+    "panobinostat":   "HIGH",    # PBTC-047 confirmed CNS exposure (Monje 2023)
+    "abemaciclib":    "HIGH",    # Designed for CNS penetrance vs palbociclib
     "dexamethasone":  "HIGH",
     "lomustine":      "HIGH",
     "carmustine":     "HIGH",
-    "marizomib":      "HIGH",    # Designed for CNS — crosses BBB unlike bortezomib
+    "marizomib":      "HIGH",    # Engineered for CNS — crosses BBB unlike bortezomib
     "thioridazine":   "HIGH",
     "valproic acid":  "HIGH",
     "chloroquine":    "HIGH",
+    # Paxalisib: designed as brain-penetrant PI3K/mTOR inhibitor (Genentech).
+    # FDA Orphan Drug for DIPG (2020). Pediatric Phase I (NCT03696355) and
+    # Phase II (NCT05009992). CNS penetrance by design and preclinical PK.
+    "paxalisib":      "HIGH",
+    "gdc-0084":       "HIGH",
+
+    # ── MODERATE ──────────────────────────────────────────────────────────────
     "hydroxychloroquine": "MODERATE",
     "metformin":      "MODERATE",
     "itraconazole":   "MODERATE",
     "ribociclib":     "MODERATE",
-    "palbociclib":    "LOW",     # Poor CNS penetrance vs abemaciclib
-
-    # ── MODERATE — some CNS exposure, data limited ────────────────────────────
-    "birabresib":     "MODERATE",  # OTX015/MK-8628; PBTC-049 pediatric CNS trial confirmed
-                                    # exposure in brain tumors. Ref: Geoerger et al. 2017
-    "vorinostat":     "MODERATE",  # HDAC inhibitor with documented CNS exposure
-    "onatasertib":    "MODERATE",  # mTOR kinase inhibitor; MW ~400 Da, lipophilic;
-                                    # class analogue AZD-8055 shows CNS exposure
-    "indoximod":      "MODERATE",  # IDO inhibitor; oral, MW 261 Da — BBB permeable by MW
-                                    # and lipophilicity. Pediatric DIPG trial ongoing (NCT04049669)
+    "birabresib":     "MODERATE",  # PBTC-049 confirmed brain exposure (Geoerger 2017)
+    "vorinostat":     "MODERATE",
+    "onatasertib":    "MODERATE",  # mTOR kinase; class analogue AZD-8055 shows CNS exposure
+    "indoximod":      "MODERATE",  # IDO inhibitor; pediatric DIPG trial ongoing NCT04049669
     "lapatinib":      "MODERATE",
     "erlotinib":      "MODERATE",
     "gefitinib":      "MODERATE",
 
-    # ── LOW — monoclonals, poor CNS penetrance, or documented BBB failure ─────
-    "belinostat":     "LOW",     # IV formulation only; poor CNS penetration documented
-                                  # in preclinical CNS models. Not a viable DIPG agent alone.
-    "romidepsin":     "LOW",     # IV cyclic depsipeptide; P-gp substrate, poor CNS exposure
-    "vistusertib":    "LOW",     # mTORC1/2; limited CNS pharmacokinetic data
-    "ridaforolimus":  "LOW",     # Rapamycin analogue; similar to temsirolimus (GBM Phase 3 fail)
-    "voxtalisib":     "LOW",     # PI3K/mTOR dual; no CNS exposure data
+    # ── LOW ───────────────────────────────────────────────────────────────────
+    "palbociclib":    "LOW",
+    "belinostat":     "LOW",
+    "romidepsin":     "LOW",
+    "vistusertib":    "LOW",
+    "ridaforolimus":  "LOW",
+    "voxtalisib":     "LOW",
     "bevacizumab":    "LOW",
     "pembrolizumab":  "LOW",
     "nivolumab":      "LOW",
@@ -49,99 +53,104 @@ KNOWN_BBB_PENETRANCE: Dict[str, str] = {
     "cetuximab":      "LOW",
     "dasatinib":      "LOW",
     "imatinib":       "LOW",
-    "bortezomib":     "LOW",     # Does NOT cross BBB — marizomib was developed to fix this
+    "bortezomib":     "LOW",
 }
 
-# Drugs that failed in clinical GBM/CNS trials — hard penalise in scoring
 KNOWN_GBM_FAILURES = {
-    "cilengitide",    # CENTRIC Phase 3 2015 — no OS benefit
-    "enzastaurin",    # Phase 3 failed
-    "temsirolimus",   # Phase 3 vs TMZ — inferior; same class as ridaforolimus
-    "cediranib",      # Phase 2 — no OS benefit despite radiological response
-    "iniparib",       # Phase 3 failed
-    "vorinostat",     # Phase 2 GBM — negative (Galanis 2009)
-    "erlotinib",      # Phase 2 GBM — negative (van den Bent 2009)
-    "gefitinib",      # Phase 2 GBM — negative
-    "imatinib",       # Phase 2 GBM — negative
-    "tipifarnib",     # Phase 2 GBM — negative
-    "sorafenib",      # Phase 2 GBM — negative
-    "sunitinib",      # Phase 2 GBM — negative
-    "dasatinib",      # Phase 2 GBM — negative
-    "everolimus",     # Phase 2 GBM — negative
-    "ribociclib",     # Phase 2 GBM — negative (unlike abemaciclib)
-    "palbociclib",    # Poor BBB — inferior to abemaciclib for GBM
-    "belinostat",     # IV-only HDAC inhibitor; no CNS trial evidence; poor BBB
-    "romidepsin",     # IV cyclic peptide; P-gp substrate; failed CNS preclinical models
-    "ridaforolimus",  # mTOR rapalog; same class failure pattern as temsirolimus in GBM
-    "vistusertib",    # mTORC1/2; no CNS activity signal
-    "voxtalisib",     # PI3K/mTOR — class has repeatedly failed in adult GBM
+    "cilengitide", "enzastaurin", "temsirolimus", "cediranib", "iniparib",
+    "vorinostat", "erlotinib", "gefitinib", "imatinib", "tipifarnib",
+    "sorafenib", "sunitinib", "dasatinib", "everolimus", "ribociclib",
+    "palbociclib", "belinostat", "romidepsin", "ridaforolimus",
+    "vistusertib", "voxtalisib",
 }
 
 
 class BBBFilter:
-    def __init__(self, penalise_low: bool = True, hard_exclude_mw: float = 800.0,
-                 low_bbb_penalty: float = 0.50, mod_bbb_penalty: float = 0.85):
-        self.penalise_low = penalise_low
-        self.hard_exclude_mw = hard_exclude_mw
-        logger.info("BBB Filter initialized (MW limit: %.1f Da)", hard_exclude_mw)
+    """
+    Blood-brain barrier filter and scorer.
+    All numeric thresholds read from pipeline_config.BBB — no magic numbers.
+    """
 
-    def score_drug(self, drug_name: str, smiles: str = "",
+    def __init__(self, hard_exclude_mw: float = None):
+        self.hard_exclude_mw = hard_exclude_mw or BBB_CONFIG["hard_exclude_mw"]
+        logger.info("BBB Filter initialized (MW limit: %.1f Da)", self.hard_exclude_mw)
+
+    def score_drug(self, drug_name: str,
                    molecular_weight: Optional[float] = None) -> Dict:
         name_lower = drug_name.lower().strip()
 
-        # Hard exclude by MW (monoclonals etc)
+        # Hard MW exclusion
         if molecular_weight and molecular_weight > self.hard_exclude_mw:
-            return {"penetrance": "LOW", "bbb_score": 0.1,
-                    "reason": f"MW {molecular_weight:.0f} Da exceeds {self.hard_exclude_mw:.0f} limit",
-                    "clinical_failure": False}
+            return {
+                "penetrance": "LOW",
+                "bbb_score":  BBB_CONFIG["heuristic_low_score"],
+                "reason":     f"MW {molecular_weight:.0f} Da > {self.hard_exclude_mw:.0f} Da limit",
+                "clinical_failure": False,
+            }
 
-        # Known GBM clinical failures — penalise heavily regardless of BBB
+        # Known GBM clinical trial failure
         if name_lower in KNOWN_GBM_FAILURES:
-            return {"penetrance": KNOWN_BBB_PENETRANCE.get(name_lower, "LOW"),
-                    "bbb_score": 0.05,
-                    "reason": f"Known GBM/CNS clinical trial failure — deprioritised",
-                    "clinical_failure": True}
+            penetrance = KNOWN_BBB_PENETRANCE.get(name_lower, "LOW")
+            return {
+                "penetrance": penetrance,
+                "bbb_score":  BBB_CONFIG["failure_score"],
+                "reason":     "Known GBM/CNS clinical trial failure — deprioritised",
+                "clinical_failure": True,
+            }
 
-        # Curated database
+        # Curated PK database
         if name_lower in KNOWN_BBB_PENETRANCE:
             penetrance = KNOWN_BBB_PENETRANCE[name_lower]
-            return {"penetrance": penetrance,
-                    "bbb_score": self._penetrance_to_score(penetrance),
-                    "reason": "Curated PK database",
-                    "clinical_failure": False}
+            return {
+                "penetrance": penetrance,
+                "bbb_score":  self._penetrance_to_score(penetrance),
+                "reason":     "Curated PK database",
+                "clinical_failure": False,
+            }
 
         # MW heuristic fallback
         if molecular_weight:
-            if molecular_weight < 400:
-                return {"penetrance": "MODERATE", "bbb_score": 0.6,
-                        "reason": "MW < 400 Da (heuristic)", "clinical_failure": False}
-            elif molecular_weight < 600:
-                return {"penetrance": "LOW", "bbb_score": 0.3,
-                        "reason": "MW 400-600 Da (heuristic)", "clinical_failure": False}
+            if molecular_weight < BBB_CONFIG["mw_moderate_cutoff"]:
+                return {"penetrance": "MODERATE",
+                        "bbb_score": BBB_CONFIG["heuristic_moderate_score"],
+                        "reason": f"MW {molecular_weight:.0f} < {BBB_CONFIG['mw_moderate_cutoff']:.0f} Da (heuristic)",
+                        "clinical_failure": False}
+            elif molecular_weight < BBB_CONFIG["mw_low_cutoff"]:
+                return {"penetrance": "LOW",
+                        "bbb_score": BBB_CONFIG["heuristic_low_near_score"],
+                        "reason": f"MW {molecular_weight:.0f} in 400-600 Da range (heuristic)",
+                        "clinical_failure": False}
             else:
-                return {"penetrance": "LOW", "bbb_score": 0.1,
-                        "reason": "MW > 600 Da (heuristic)", "clinical_failure": False}
+                return {"penetrance": "LOW",
+                        "bbb_score": BBB_CONFIG["heuristic_low_score"],
+                        "reason": f"MW {molecular_weight:.0f} > {BBB_CONFIG['mw_low_cutoff']:.0f} Da (heuristic)",
+                        "clinical_failure": False}
 
-        return {"penetrance": "UNKNOWN", "bbb_score": 0.5,
-                "reason": "No PK data available", "clinical_failure": False}
+        return {
+            "penetrance": "UNKNOWN",
+            "bbb_score":  BBB_CONFIG["unknown_score"],
+            "reason":     "No PK data available",
+            "clinical_failure": False,
+        }
 
     def filter_and_rank(self, candidates: List[Dict],
                         apply_penalty: bool = True,
                         exclude_low: bool = False) -> Tuple[List[Dict], List[Dict]]:
         passing, excluded = [], []
         n_failures = 0
+
         for c in candidates:
-            name = c.get("name") or c.get("drug_name") or "Unknown"
-            mw   = c.get("molecular_weight")
+            name   = c.get("name") or c.get("drug_name") or "Unknown"
+            mw     = c.get("molecular_weight")
             result = self.score_drug(name, molecular_weight=mw)
 
-            c["bbb_penetrance"]    = result["penetrance"]
-            c["bbb_score"]         = result["bbb_score"]
-            c["clinical_failure"]  = result["clinical_failure"]
+            c["bbb_penetrance"]   = result["penetrance"]
+            c["bbb_score"]        = result["bbb_score"]
+            c["clinical_failure"] = result["clinical_failure"]
 
-            if result["clinical_failure"]:
+            if result["clinical_failure"] and apply_penalty:
                 n_failures += 1
-                c["score"] = c.get("score", 0.0) * 0.1
+                c["score"] = c.get("score", 0.0) * BBB_CONFIG["failure_composite_multiplier"]
 
             if exclude_low and result["penetrance"] == "LOW":
                 excluded.append(c)
@@ -154,4 +163,4 @@ class BBBFilter:
         return passing, excluded
 
     def _penetrance_to_score(self, category: str) -> float:
-        return {"HIGH": 1.0, "MODERATE": 0.6, "LOW": 0.2, "UNKNOWN": 0.5}.get(category, 0.5)
+        return BBB_CONFIG["penetrance_scores"].get(category, BBB_CONFIG["unknown_score"])
