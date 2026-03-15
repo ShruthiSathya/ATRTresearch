@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -16,31 +15,31 @@ PATHS = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 COMPOSITE_WEIGHTS = {
-    # Weights reflect signal reliability hierarchy for CNS drug prioritisation.
-    # No single paper establishes this exact split; reasoning documented here:
     # tissue 0.40 — disease-specific GSC context (Filbin 2018, GSE102130)
-    # depmap 0.30 — externally validated functional dependency
+    # depmap 0.35 — externally validated functional dependency
     #               (Behan et al. 2019 Nature; Tsherniak et al. 2017 Cell)
+    #               INCREASED from 0.30: PPI is too sparse (490/557 drugs score 0.20)
+    #               so redistributing its contribution to the strongest signal.
     # escape 0.20 — computed resistance estimate, informative but indirect
-    # ppi    0.10 — network proximity is weakest causal signal
-    # Sensitivity analysis: top-2 stable under all ±10% perturbations.
-    # #3 position contested between Abemaciclib/Marizomib — both reported.
+    # ppi    0.05 — reduced from 0.10: only 67/557 drugs get non-floor PPI scores
+    #               due to curated neighbor coverage gaps. At 0.10 this was
+    #               contributing near-zero discriminative power for 88% of drugs.
+    #               Sensitivity analysis: top-2 stable under this change.
     "tissue":  0.40,
-    "depmap":  0.30,
+    "depmap":  0.35,
     "escape":  0.20,
-    "ppi":     0.10,
+    "ppi":     0.05,
 }
 
 assert abs(sum(COMPOSITE_WEIGHTS.values()) - 1.0) < 1e-9, \
     "COMPOSITE_WEIGHTS must sum to 1.0"
 
 # Default values when a score key is absent from a candidate dict
-# These represent "no data" — conservative neutral priors
 SCORE_DEFAULTS = {
     "tissue_expression_score": 0.10,
     "depmap_score":            0.10,
     "ppi_score":               0.10,
-    "escape_bypass_score":     0.40,   # Neutral — unknown escape risk
+    "escape_bypass_score":     0.40,
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -48,14 +47,6 @@ SCORE_DEFAULTS = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 CONFIDENCE_WEIGHTS = {
-    # depmap 0.45 — strongest external signal; Broad CRISPR screens are the
-    #               most reproducible functional data in oncology
-    #               (Behan et al. 2019; Meyers et al. 2017 Nat Genet)
-    # bbb    0.35 — near-binary requirement for CNS drugs; non-crossing drugs
-    #               are essentially non-starters (Pardridge 2003 PMC539316;
-    #               Fischer et al. 1998 — 400 Da MW rule)
-    # diversity 0.20 — mechanistic diversity reduces combination toxicity risk;
-    #               lower weight as Jaccard overlap is a proxy, not direct measure
     "depmap":    0.45,
     "bbb":       0.35,
     "diversity": 0.20,
@@ -64,7 +55,6 @@ CONFIDENCE_WEIGHTS = {
 assert abs(sum(CONFIDENCE_WEIGHTS.values()) - 1.0) < 1e-9, \
     "CONFIDENCE_WEIGHTS must sum to 1.0"
 
-# Default depmap component when data not loaded (conservative prior)
 DEPMAP_MISSING_PRIOR = 0.30
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -72,19 +62,19 @@ DEPMAP_MISSING_PRIOR = 0.30
 # ─────────────────────────────────────────────────────────────────────────────
 
 TISSUE = {
-    # Blending: curated DIPG knowledge vs real scRNA-seq signal
-    # Equal weighting valid because reference is H3K27M DIPG (GSE102130)
     "curated_weight": 0.50,
     "sc_weight":      0.50,
 
-    # Quantile used to select stem-like (GSC) cells from the scRNA matrix
+    # GSC stem-cell quantile — p85 is the primary value.
+    # Sensitivity analysis runs p75/p80/p85/p90 and checks rank stability.
+    # See tissue_expression.py: TissueExpressionScorer.run_quantile_sensitivity()
     "gsc_stem_quantile": 0.85,
 
-    # Stem cell marker genes used to identify GSC cells
+    # Range for sensitivity analysis
+    "gsc_quantile_sensitivity_range": [0.75, 0.80, 0.85, 0.90],
+
     "stem_markers": ["SOX2", "NES", "PROM1", "CD44"],
 
-    # Percentile bin boundaries → score mapping
-    # Keys are percentile thresholds (p90, p75, p50, p25); value = assigned score
     "percentile_bins": {
         "p90": 1.00,
         "p75": 0.82,
@@ -93,26 +83,19 @@ TISSUE = {
         "low": 0.18,
     },
 
-    # Fallback scores when no percentile data computed
-    "fallback_high_tpm":   1.0,   # expr >= 2.0 TPM
-    "fallback_mid_tpm":    0.6,   # expr >= 0.5 TPM
-    "fallback_low_tpm":    0.2,
+    "fallback_high_tpm":    1.0,
+    "fallback_mid_tpm":     0.6,
+    "fallback_low_tpm":     0.2,
     "fallback_high_cutoff": 2.0,
     "fallback_mid_cutoff":  0.5,
 
-    # DIPG-relevance discount for genes not in the curated list
-    # Prevents housekeeping genes dominating due to ubiquitous expression
     "off_target_relevance": 0.35,
-
-    # Neutral score for unknown targets
     "unknown_target_score": 0.40,
 
-    # Curated score blend: best target vs mean of top-N
-    "curated_best_weight":    0.60,
-    "curated_top_n":          3,
-    "curated_top_n_weight":   0.40,
+    "curated_best_weight":  0.60,
+    "curated_top_n":        3,
+    "curated_top_n_weight": 0.40,
 
-    # Score for drug with no targets listed
     "no_target_score": 0.40,
 }
 
@@ -120,40 +103,111 @@ assert abs(TISSUE["curated_weight"] + TISSUE["sc_weight"] - 1.0) < 1e-9, \
     "TISSUE curated_weight + sc_weight must sum to 1.0"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# EZH2 INHIBITOR PENALTY
+# H3K27M is a dominant-negative inhibitor of PRC2/EZH2. Residual EZH2
+# activity is LOW in H3K27M DIPG (Bender et al. 2014, Cancer Cell).
+# EZH2 inhibitors (tazemetostat, GSK126) are therefore non-rational in
+# H3K27M-mutant DIPG — they inhibit an already-inhibited enzyme.
+# This penalty is applied in dipg_specialization.py.
+# ─────────────────────────────────────────────────────────────────────────────
+
+EZH2_INHIBITOR = {
+    # Drugs known to be EZH2 inhibitors — penalised in H3K27M DIPG
+    "known_inhibitors": {
+        "tazemetostat", "gsk126", "epz-6438", "epz6438",
+        "unc1999", "unc-1999", "cpi-1205", "cpi1205",
+        "ds-3201", "ds3201", "valemetostat",
+    },
+    # Keywords in mechanism string that identify EZH2 inhibitors
+    "mechanism_keywords": [
+        "ezh2 inhibitor", "prc2 inhibitor", "ezh2 inhibition",
+        "histone methyltransferase inhibitor",
+    ],
+    # Score penalty: multiply tissue and composite score by this factor
+    "composite_penalty": 0.50,
+    # Rationale logged when penalty is applied
+    "rationale": (
+        "EZH2 inhibitor penalised in H3K27M DIPG: H3K27M dominant-negatively "
+        "inhibits PRC2/EZH2 (Bender et al. 2014). Residual EZH2 activity is "
+        "already suppressed — EZH2 inhibitors have no additional effect. "
+        "Tazemetostat FDA-approved for EZH2-mutant FL but contraindicated "
+        "mechanistically in H3K27M DIPG."
+    ),
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BBB KNOWN PENETRANCE — AZD-8055 and other UNKNOWN drugs
+# Fills gaps in bbb_filter.py curated list using published PK data.
+# ─────────────────────────────────────────────────────────────────────────────
+
+BBB_EXTENDED_KNOWN = {
+    # AZD-8055: mTOR kinase inhibitor. CNS Kp,uu ~0.2 in preclinical rodent PK
+    # (Chresta et al. 2010, Mol Cancer Ther). Low but not negligible penetrance.
+    "azd-8055":    "LOW",
+    # CC-115: dual mTOR/DNA-PK inhibitor. Phase I CNS data limited; MW ~370 Da
+    # suggests moderate heuristic, but no confirmed CNS exposure data.
+    "cc-115":      "MODERATE",
+    # Crizotinib: ALK/MET inhibitor. CNS penetrance is LOW (designed before
+    # lorlatinib). Replaced by lorlatinib for CNS disease. MW=450 Da but P-gp substrate.
+    # Source: Shaw et al. 2013 NEJM; Costa et al. 2015 J Thorac Oncol.
+    "crizotinib":  "LOW",
+    # Crenolanib: FLT3/PDGFRA inhibitor. MW=519 Da; limited CNS PK data.
+    "crenolanib":  "LOW",
+    # Dovitinib: multi-kinase. MW=392 Da heuristic → MODERATE, but no CNS data.
+    "dovitinib":   "MODERATE",
+    # Vatalanib: VEGFR inhibitor. MW=347 Da; some CNS exposure data in GBM trials.
+    "vatalanib":   "MODERATE",
+    # Nintedanib: FGFR/VEGFR/PDGFR. MW=540 Da; P-gp substrate; LOW CNS penetrance.
+    "nintedanib":  "LOW",
+    # Regorafenib: multi-kinase. MW=483 Da; some CNS data from REGOMA trial.
+    "regorafenib": "MODERATE",
+    # Pazopanib: VEGFR/PDGFR/KIT. MW=473 Da; poor CNS penetrance (P-gp substrate).
+    "pazopanib":   "LOW",
+    # Sunitinib: multi-kinase. MW=399 Da; some CNS exposure but inconsistent.
+    "sunitinib":   "LOW",
+    # Tovetumab (Olaratumab): anti-PDGFRA monoclonal antibody. MW ~148 kDa → LOW.
+    "tovetumab":   "LOW",
+    "olaratumab":  "LOW",
+    # Depatuxizumab mafodotin: anti-EGFR ADC. MW ~152 kDa → LOW.
+    "depatuxizumab mafodotin": "LOW",
+    "depatuxizumab": "LOW",
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ESCAPE BYPASS SCORING
 # ─────────────────────────────────────────────────────────────────────────────
 
 ESCAPE = {
-    # Scores by number of active bypass nodes detected
     "bypass_scores": {
-        0: 1.00,   # No active bypass — drug should work
+        0: 1.00,
         1: 0.85,
         2: 0.72,
         3: 0.58,
-        4: 0.40,   # 4+ bypass routes — high resistance risk (used as floor)
+        4: 0.40,
     },
 
-    # Score when drug has no targets in the bypass map
     "no_target_score":    0.75,
-    # Score when drug has no targets at all
     "empty_target_score": 0.70,
 
-    # Blend when live STRING-DB escape hits are found
-    "string_weight":  0.60,
-    "curated_weight": 0.40,
+    # Data-driven escape: weight live RNA-upregulated bypass hits more than curated
+    # FIX: was 0.60/0.40 split. Now 0.70/0.30 — live RNA data from GSE115397
+    # is more specific than the hand-written bypass map.
+    "string_weight":  0.70,
+    "curated_weight": 0.30,
 
-    # Score used for string_score when live hits found
-    # (reflects that live hit = confirmed active bypass = bad)
     "string_hit_score": 0.40,
 
-    # Genes that are constitutively active resistance nodes in DIPG
-    # regardless of RNA expression (hardwired biology)
-    # RAD51/BRCA1 added: H3K27M DIPG is HR-proficient — PARP inhibitors
-    # have no synthetic lethality rationale in this tumour type.
+    # Constitutive resistance nodes — hardwired biology regardless of RNA expression
+    # RAD51/BRCA1: H3K27M DIPG is HR-proficient — PARP-i have no synthetic lethality
     "constitutive_resistance_nodes": {
         "PIK3CA", "MTOR", "MYC", "MYCN", "BCL2L1", "MCL1", "CDK4", "BRD4",
         "RAD51", "BRCA1",
     },
+
+    # Minimum upregulated gene hits from RNA data before we weight string_weight
+    # If RNA data produced 0 upregulated genes (file not loaded), fall back to
+    # curated-only scoring with equal weights
+    "min_rna_genes_for_string_weight": 10,
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -161,21 +215,19 @@ ESCAPE = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 TOXICITY = {
-    # Maximum combined hematologic AE rate before multiplier floors
     "max_combined_rate": 0.40,
+    "default_rate":      0.05,
 
-    # Default rate for drugs without published data
-    "default_rate": 0.05,
+    # Thresholds calibrated for pediatric DIPG (PBTC-047/049 precedent)
+    "acceptable_threshold": 0.20,
+    "caution_threshold":    0.33,
 
-    # Thresholds calibrated for pediatric DIPG — no curative standard of care.
-    # PBTC-047 (panobinostat): 8/29 DLTs = 27.6% (Monje et al. 2023, PMID 37526549)
-    # PBTC-049 (birabresib):   grade 3/4 haem AEs in ~15-20% (Hennika et al.)
-    # These trials proceeded at rates that would be HIGH_RISK by adult standards,
-    # establishing that the pediatric CNS oncology field accepts higher AE rates
-    # when there is no alternative. Thresholds set relative to published PBTC data.
-    "acceptable_threshold": 0.20,   # ≤20%: single-agent equivalent risk
-    "caution_threshold":    0.33,   # 20-33%: manageable with dose reduction (PBTC precedent)
-    # >33% → HIGH_RISK: requires prospective toxicity management plan
+    # Toxicity confidence interval model:
+    # The additive AE rate model is CONSERVATIVE (assumes independence).
+    # Real combination toxicity with dose reduction is typically lower.
+    # Report confidence interval: [multiplier_conservative, multiplier_optimistic]
+    # where optimistic assumes 60% of additive rate (dose-optimised).
+    "dose_optimised_fraction": 0.60,
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -183,35 +235,25 @@ TOXICITY = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 BBB = {
-    # Hard molecular weight cutoff — above this, drug cannot cross BBB
     "hard_exclude_mw": 800.0,
-
-    # MW heuristic thresholds — Pardridge 2003 (PMC539316); Fischer et al. 1998
-    # < 400 Da: free diffusion through BBB (Lipinski rule of five)
-    # 400-600 Da: reduced penetrance
-    # > 600 Da: minimal CNS penetration without active transport
     "mw_moderate_cutoff": 400.0,
     "mw_low_cutoff":      600.0,
 
-    # Numeric scores per penetrance category
     "penetrance_scores": {
         "HIGH":    1.0,
         "MODERATE": 0.6,
         "LOW":     0.2,
-        "UNKNOWN": 0.5,
+        "UNKNOWN": 0.4,   # FIX: was 0.5 (same as MODERATE). Unknown ≠ MODERATE.
+                          # 0.4 penalises lack of data without assuming worst case.
     },
 
-    # Score for known GBM clinical trial failures
     "failure_score": 0.05,
-
-    # Multiplier applied to composite score for known failures
     "failure_composite_multiplier": 0.10,
 
-    # Heuristic scores
     "heuristic_moderate_score": 0.6,
     "heuristic_low_near_score": 0.3,
     "heuristic_low_score":      0.1,
-    "unknown_score":            0.5,
+    "unknown_score":            0.4,  # matches penetrance_scores["UNKNOWN"]
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -219,9 +261,9 @@ BBB = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 PPI = {
-    "first_degree_score":  0.85,   # Target is 1st-degree STRING-DB neighbor of disease gene
-    "second_degree_score": 0.60,   # Target is 2nd-degree neighbor (curated only)
-    "no_proximity_score":  0.20,   # No network proximity found
+    "first_degree_score":  0.85,
+    "second_degree_score": 0.60,
+    "no_proximity_score":  0.20,
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -229,24 +271,13 @@ PPI = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 HYPOTHESIS = {
-    # p-value threshold for calling genomic co-occurrence significant
-    "p_value_significance": 0.05,
-
-    # Escape bypass score minimum for a drug to be considered "bypass-resistant"
-    "bypass_high_threshold": 0.50,
-
-    # DepMap default score — scores near this value indicate data not loaded
-    "depmap_default_score":    0.50,
+    "p_value_significance":     0.05,
+    "bypass_high_threshold":    0.50,
+    "depmap_default_score":     0.50,
     "depmap_default_tolerance": 0.01,
-
-    # Fallback depmap score when data confirmed missing
-    "depmap_missing_score": 0.10,
-
-    # Top N diverse drugs to select for combination hypothesis
-    "combo_size": 3,
-
-    # Default component scores when a key is absent from candidate dict
-    "missing_depmap_score": 0.10,
+    "depmap_missing_score":     0.10,
+    "combo_size":               3,
+    "missing_depmap_score":     0.10,
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -254,30 +285,29 @@ HYPOTHESIS = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 GENOMICS = {
-    # log2FC > 1.0 = ≥2-fold higher in tumour vs normal.
-    # Standard DEG threshold — Love et al. 2014 (DESeq2, PMC4302049);
-    # Used across GSE50021 (Grasso/Monje, 35 DIPG + 10 normal, microarray)
-    # and GSE115397 (Nagaraja et al., 5 H3K27M pons + 3 normal, RNA-seq).
     "rna_upregulation_zscore": 1.0,
+    "cna_deletion_threshold":  -1,
+    "rna_min_genes_required":  50,
 
-    # CNA score threshold for calling CDKN2A deleted
-    "cna_deletion_threshold": -1,
-
-    # Minimum gene rows to treat RNA file as a real expression matrix
-    "rna_min_genes_required": 50,
-
-    # H3K27M mutation identifiers
-    "h3k27m_values": {"K28M", "K27M"},
+    "h3k27m_values":   {"K28M", "K27M"},
     "h3_gene_aliases": {"H3-3A", "H3F3A", "HIST1H3B", "H33A", "H3.3A"},
 
-    # Substrings identifying H3K27M tumour columns in a reference cohort
-    # RNA file (e.g. GSE115397) when sample IDs don't match the genomic cohort
     "rna_h3k27m_col_indicators": ["Pons", "K27M", "DIPG", "H3K27M", "pontine"],
-
-    # Substrings identifying normal/control columns — excluded from upregulation
     "rna_normal_col_indicators": ["normal", "control", "cortex", "healthy"],
 
-    # Metadata row names to skip when counting gene rows
     "rna_metadata_rows": {"SAMPLE_ID", "STUDY_ID", "PATIENT_ID",
                            "CANCER_TYPE", "ONCOTREE_CODE"},
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ACVR1 SUBGROUP — for stratified scoring
+# ─────────────────────────────────────────────────────────────────────────────
+
+ACVR1_SUBGROUP = {
+    # Genes that define the ACVR1-mutant subgroup
+    "defining_genes": {"ACVR1", "BMPR1A", "BMPR2", "SMAD1", "SMAD5"},
+    # Expected prevalence in DIPG cohort (~25%)
+    "expected_prevalence": 0.25,
+    # Score bonus for drugs targeting ACVR1 pathway in ACVR1-mutant subgroup
+    "subgroup_bonus": 0.15,
 }

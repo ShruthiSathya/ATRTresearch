@@ -1,6 +1,9 @@
 # Ignore raw data files
 data/raw_omics/
 data/validation/
+data/cmap_query/
+data/cmap_query/query_result.gct
+data/cmap_query/cmap_results_ncs.gct
 *.csv
 *.tsv
 *.gz

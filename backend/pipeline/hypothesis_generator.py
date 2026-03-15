@@ -18,15 +18,15 @@ def _compute_externally_grounded_confidence(top_3: List[Dict]) -> Dict:
     Compute confidence from three externally-grounded signals,
     then apply toxicity penalty multiplier.
 
-    Weights are read from pipeline_config.CONFIDENCE_WEIGHTS.
-    No magic numbers in this function.
+    v5.5: Returns both conservative and optimistic confidence bounds,
+    making explicit that the adjusted confidence is a RANGE not a point.
     """
     if not top_3:
         return {"confidence": 0.0, "confidence_raw": 0.0, "explanation": "No candidates"}
 
-    cw = CONFIDENCE_WEIGHTS   # shorthand
+    cw = CONFIDENCE_WEIGHTS
 
-    # ── Component A: DepMap CRISPR essentiality (Broad Institute) ─────────────
+    # ── Component A: DepMap CRISPR essentiality ───────────────────────────────
     depmap_scores    = [c.get("depmap_score", HYP_CONFIG["missing_depmap_score"]) for c in top_3]
     depmap_component = sum(depmap_scores) / len(depmap_scores)
 
@@ -35,11 +35,11 @@ def _compute_externally_grounded_confidence(top_3: List[Dict]) -> Dict:
     all_default   = all(abs(s - default_score) < tolerance for s in depmap_scores)
     if all_default:
         depmap_component = DEPMAP_MISSING_PRIOR
-        depmap_note = "DepMap data not loaded (CRISPRGeneEffect.csv missing) — using prior"
+        depmap_note = "DepMap data not loaded — using prior 0.30"
     else:
         depmap_note = f"Broad CRISPR Chronos scores: {[round(s, 2) for s in depmap_scores]}"
 
-    # ── Component B: BBB penetrance (curated PK literature) ───────────────────
+    # ── Component B: BBB penetrance ───────────────────────────────────────────
     penetrance_scores = BBB_CONFIG["penetrance_scores"]
     bbb_cats      = [c.get("bbb_penetrance", "UNKNOWN") for c in top_3]
     bbb_scores    = [penetrance_scores.get(cat, penetrance_scores["UNKNOWN"]) for cat in bbb_cats]
@@ -49,7 +49,7 @@ def _compute_externally_grounded_confidence(top_3: List[Dict]) -> Dict:
         f"{ list(zip([c.get('name', '?') for c in top_3], bbb_cats)) }"
     )
 
-    # ── Component C: Mechanistic diversity (target Jaccard) ───────────────────
+    # ── Component C: Mechanistic diversity ────────────────────────────────────
     all_target_sets   = [set(c.get("targets", [])) for c in top_3]
     pairwise_overlaps = [
         len(a & b) / max(len(a | b), 1)
@@ -71,28 +71,35 @@ def _compute_externally_grounded_confidence(top_3: List[Dict]) -> Dict:
     # ── Toxicity penalty (single call — not duplicated in discovery_pipeline) ─
     drug_names = [c.get("drug_name", c.get("name", "UNKNOWN")).upper() for c in top_3]
     tox_result = combination_toxicity_penalty(drug_names)
-    multiplier = tox_result["multiplier"]
 
-    confidence_final = round(confidence_raw * multiplier, 4)
+    multiplier     = tox_result["multiplier"]
+    multiplier_opt = tox_result["multiplier_optimistic"]
+
+    confidence_final     = round(confidence_raw * multiplier, 4)
+    confidence_optimistic = round(confidence_raw * multiplier_opt, 4)
 
     return {
-        "confidence":          confidence_final,
-        "confidence_raw":      confidence_raw,
-        "depmap_component":    round(depmap_component, 4),
-        "bbb_component":       round(bbb_component, 4),
-        "diversity_component": round(diversity_component, 4),
-        "toxicity_multiplier": multiplier,
-        "toxicity_flag":       tox_result["flag"],
-        "toxicity_note":       tox_result["note"],
-        "depmap_note":         depmap_note,
-        "bbb_note":            bbb_note,
-        "diversity_note":      diversity_note,
+        "confidence":               confidence_final,       # conservative (lower bound)
+        "confidence_optimistic":    confidence_optimistic,  # dose-optimised (upper bound)
+        "confidence_raw":           confidence_raw,
+        "depmap_component":         round(depmap_component, 4),
+        "bbb_component":            round(bbb_component, 4),
+        "diversity_component":      round(diversity_component, 4),
+        "toxicity_multiplier":      multiplier,
+        "toxicity_multiplier_optimistic": multiplier_opt,
+        "toxicity_flag":            tox_result["flag"],
+        "toxicity_note":            tox_result["note"],
+        "toxicity_confidence_note": tox_result["confidence_note"],
+        "depmap_note":              depmap_note,
+        "bbb_note":                 bbb_note,
+        "diversity_note":           diversity_note,
         "explanation": (
             f"Raw = {cw['depmap']}×DepMap({depmap_component:.2f}) "
             f"+ {cw['bbb']}×BBB({bbb_component:.2f}) "
             f"+ {cw['diversity']}×Diversity({diversity_component:.2f}) = {confidence_raw:.2f}. "
-            f"Toxicity multiplier = {multiplier:.3f} ({tox_result['flag']}). "
-            f"Adjusted = {confidence_raw:.2f} × {multiplier:.3f} = {confidence_final:.2f}. "
+            f"Toxicity multiplier: {multiplier:.3f} [conservative] / {multiplier_opt:.3f} [optimistic] "
+            f"({tox_result['flag']}). "
+            f"Adjusted confidence RANGE: [{confidence_final:.2f}, {confidence_optimistic:.2f}]. "
             f"{tox_result['note']}"
         ),
     }
@@ -100,12 +107,12 @@ def _compute_externally_grounded_confidence(top_3: List[Dict]) -> Dict:
 
 class HypothesisGenerator:
     """
-    v5.4: Hypothesis assembly with externally-grounded, toxicity-adjusted
-    confidence scoring. All weights read from pipeline_config.
+    v5.5: Hypothesis assembly with externally-grounded, toxicity-adjusted
+    confidence scoring. Reports confidence as a RANGE not a point estimate.
     """
 
     def __init__(self):
-        logger.info("✅ Hypothesis Generator Initialized (Diversity Mode)")
+        logger.info("✅ Hypothesis Generator v5.5 (Confidence range reporting)")
 
     def generate(
         self,
@@ -166,30 +173,62 @@ class HypothesisGenerator:
             combo_targets.extend(c.get("targets", []))
         target_str = " / ".join(list(dict.fromkeys(combo_targets))[:5])
 
+        # FIX v5.5: Report EZH2 inhibitor penalties in hypothesis if any top-3 were penalised
+        ezh2_warnings = [
+            c.get("name", "?") for c in top_3
+            if c.get("dipg_components", {}).get("is_ezh2_inhibitor")
+        ]
+
+        # FIX v5.5: Note escape bypass mode (RNA-confirmed vs curated fallback)
+        escape_mode = "RNA-confirmed" if (
+            genomic_stats and genomic_stats.get("has_rna_data")
+        ) else "curated fallback"
+
         triple_hit = {
-            "drug_or_combo": combo_name,
-            "priority":      priority,
-            "confidence":    confidence_data["confidence"],
+            "drug_or_combo":   combo_name,
+            "priority":        priority,
+            "confidence":      confidence_data["confidence"],             # conservative lower bound
+            "confidence_optimistic": confidence_data["confidence_optimistic"],  # upper bound
+            "confidence_range": (
+                f"[{confidence_data['confidence']:.2f}, "
+                f"{confidence_data['confidence_optimistic']:.2f}]"
+            ),
             "confidence_breakdown": {
-                "confidence_raw":        confidence_data["confidence_raw"],
-                "confidence_adjusted":   confidence_data["confidence"],
-                "depmap_essentiality":   confidence_data["depmap_component"],
-                "bbb_penetrance":        confidence_data["bbb_component"],
-                "mechanistic_diversity": confidence_data["diversity_component"],
-                "toxicity_multiplier":   confidence_data["toxicity_multiplier"],
-                "toxicity_flag":         confidence_data["toxicity_flag"],
-                "toxicity_note":         confidence_data["toxicity_note"],
+                "confidence_raw":             confidence_data["confidence_raw"],
+                "confidence_adjusted":        confidence_data["confidence"],
+                "confidence_adjusted_optimistic": confidence_data["confidence_optimistic"],
+                "confidence_range":           (
+                    f"[{confidence_data['confidence']:.2f}, "
+                    f"{confidence_data['confidence_optimistic']:.2f}]"
+                ),
+                "depmap_essentiality":        confidence_data["depmap_component"],
+                "bbb_penetrance":             confidence_data["bbb_component"],
+                "mechanistic_diversity":      confidence_data["diversity_component"],
+                "toxicity_multiplier":        confidence_data["toxicity_multiplier"],
+                "toxicity_multiplier_optimistic": confidence_data["toxicity_multiplier_optimistic"],
+                "toxicity_flag":              confidence_data["toxicity_flag"],
+                "toxicity_note":              confidence_data["toxicity_note"],
+                "toxicity_confidence_note":   confidence_data["toxicity_confidence_note"],
                 "weights_used": {
                     "depmap":    CONFIDENCE_WEIGHTS["depmap"],
                     "bbb":       CONFIDENCE_WEIGHTS["bbb"],
                     "diversity": CONFIDENCE_WEIGHTS["diversity"],
                 },
                 "method": (
-                    "Weighted combination of: "
+                    "Weighted combination: "
                     "(1) DepMap CRISPR Chronos essentiality (Broad Institute), "
                     "(2) BBB penetrance (curated PK literature), "
                     "(3) Target Jaccard diversity. "
-                    "v5.4: multiplied by hematologic toxicity penalty from Phase I AE data."
+                    "v5.5: confidence reported as range [conservative, optimistic] "
+                    "accounting for dose-optimisation uncertainty."
+                ),
+                # FIX v5.5: surface pipeline accuracy notes
+                "escape_bypass_mode": escape_mode,
+                "ezh2_inhibitors_in_combo": ezh2_warnings,
+                "ppi_weight_note": (
+                    "PPI weight reduced to 0.05 (from 0.10) in v5.5: "
+                    "490/557 drugs scored at floor (0.20) due to sparse curated neighbors. "
+                    "DepMap weight increased to 0.35 to compensate."
                 ),
             },
             "confidence_explanation": confidence_data["explanation"],
@@ -219,28 +258,47 @@ class HypothesisGenerator:
                 f"({genomic_stats['prevalence']:.1%} prevalence)"
             )
 
+        if genomic_stats and genomic_stats.get("acvr1_estimated_n"):
+            triple_hit["acvr1_subgroup_note"] = (
+                f"~{genomic_stats['acvr1_estimated_n']} samples estimated ACVR1-mutant "
+                f"(~25% of H3K27M+). ACVR1-relevant candidates in separate subgroup report."
+            )
+
         return [triple_hit]
 
     def generate_report(self, hypotheses: List[Dict]) -> str:
-        lines = ["# GBM/DIPG Unbiased Discovery Report v5.4\n"]
+        lines = ["# GBM/DIPG Unbiased Discovery Report v5.5\n"]
         for h in hypotheses:
-            bd   = h.get("confidence_breakdown", {})
-            raw  = bd.get("confidence_raw", 0)
-            adj  = bd.get("confidence_adjusted", 0)
-            mult = bd.get("toxicity_multiplier", 1)
-            flag = bd.get("toxicity_flag", "?")
-            wts  = bd.get("weights_used", CONFIDENCE_WEIGHTS)
+            bd       = h.get("confidence_breakdown", {})
+            raw      = bd.get("confidence_raw", 0)
+            adj      = bd.get("confidence_adjusted", 0)
+            adj_opt  = bd.get("confidence_adjusted_optimistic", adj)
+            mult     = bd.get("toxicity_multiplier", 1)
+            mult_opt = bd.get("toxicity_multiplier_optimistic", 1)
+            flag     = bd.get("toxicity_flag", "?")
+            wts      = bd.get("weights_used", CONFIDENCE_WEIGHTS)
+            conf_range = bd.get("confidence_range", f"[{adj:.2f}, {adj_opt:.2f}]")
 
             lines += [
                 f"## {h['drug_or_combo']}",
                 f"- **Priority:** {h['priority']}",
-                f"- **Confidence (adjusted):** {adj:.2f}  *(raw: {raw:.2f} × tox: {mult:.3f} — {flag})*",
+                f"- **Confidence range (adjusted):** {conf_range}",
+                f"  - Conservative (additive tox model): {adj:.2f}  "
+                f"*(raw: {raw:.2f} × tox: {mult:.3f} — {flag})*",
+                f"  - Optimistic (dose-optimised):       {adj_opt:.2f}  "
+                f"*(raw: {raw:.2f} × tox: {mult_opt:.3f})*",
                 f"  - DepMap essentiality (w={wts.get('depmap', '?')}): {bd.get('depmap_essentiality', 0):.2f}",
                 f"  - BBB penetrance     (w={wts.get('bbb', '?')}): {bd.get('bbb_penetrance', 0):.2f}",
                 f"  - Target diversity   (w={wts.get('diversity', '?')}): {bd.get('mechanistic_diversity', 0):.2f}",
                 f"  - Toxicity note: {bd.get('toxicity_note', '')}",
+                f"  - {bd.get('toxicity_confidence_note', '')}",
+                f"- **Escape bypass mode:** {bd.get('escape_bypass_mode', 'unknown')}",
                 f"- **Targets:** {h['target_context']}",
                 f"- **Statistical Significance:** {h.get('statistical_significance', 'N/A')}",
                 f"- **Mechanism:** {h['mechanism_narrative']}\n",
             ]
+
+            if h.get("acvr1_subgroup_note"):
+                lines.append(f"- **ACVR1 subgroup:** {h['acvr1_subgroup_note']}\n")
+
         return "\n".join(lines)

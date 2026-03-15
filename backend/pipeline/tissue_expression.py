@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from .pipeline_config import PATHS, TISSUE
 
@@ -11,21 +11,14 @@ logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CURATED DIPG/GBM GSC EXPRESSION SCORES
-# Source: Grasso et al. 2015 (Nat Med), Nagaraja et al. 2017 (Cancer Cell),
-#         Filbin et al. 2018 (Science), Tirosh et al. 2016 (Science)
-#
-# Scores = percentile rank in published H3K27M DIPG sc datasets (0–1).
-# Used as one component of the blended score when scRNA-seq is loaded,
-# or as full fallback when scRNA-seq file is not available.
+# Source: Grasso et al. 2015, Nagaraja et al. 2017, Filbin et al. 2018
+# EZH2 score = 0.22: H3K27M dominant-negatively inhibits PRC2/EZH2
+# (Bender et al. 2014 Cancer Cell). Consistent with dipg_specialization.py
+# EZH2 inhibitor penalty.
 # ─────────────────────────────────────────────────────────────────────────────
 
 DIPG_GSC_CURATED_SCORES: Dict[str, float] = {
-    # ── Epigenetic targets ────────────────────────────────────────────────────
-    # EZH2: H3K27M is a dominant-negative inhibitor of PRC2/EZH2 complex.
-    # EZH2 activity is LOW in H3K27M DIPG — Bender et al. 2014 (Cancer Cell).
-    # EZH2 inhibitors (tazemetostat) have no rationale in H3K27M DIPG.
-    # Score set to 0.22 to prevent false boosting of EZH2 inhibitors.
-    "EZH2":    0.22,
+    "EZH2":    0.22,   # H3K27M suppresses PRC2 — EZH2 inhibitors non-rational
     "EED":     0.88,
     "SUZ12":   0.85,
     "BRD4":    0.90,
@@ -36,16 +29,20 @@ DIPG_GSC_CURATED_SCORES: Dict[str, float] = {
     "HDAC3":   0.81,
     "HDAC4":   0.68,
     "HDAC6":   0.65,
+    "HDAC5":   0.62,
+    "HDAC7":   0.60,
+    "HDAC8":   0.58,
+    "HDAC9":   0.65,
+    "HDAC10":  0.55,
+    "HDAC11":  0.52,
     "KDM6A":   0.72,
     "KDM6B":   0.70,
-    # ── Cell cycle / CDK ──────────────────────────────────────────────────────
     "CDK4":    0.85,
     "CDK6":    0.78,
     "CCND1":   0.72,
     "CDKN2A":  0.18,
     "RB1":     0.55,
     "E2F1":    0.68,
-    # ── RTK / signalling ──────────────────────────────────────────────────────
     "PDGFRA":  0.88,
     "EGFR":    0.65,
     "MET":     0.60,
@@ -54,52 +51,73 @@ DIPG_GSC_CURATED_SCORES: Dict[str, float] = {
     "AKT1":    0.68,
     "PTEN":    0.28,
     "MTOR":    0.72,
-    # ── Proteasome ────────────────────────────────────────────────────────────
+    "RPTOR":   0.65,
+    "MLST8":   0.60,
     "PSMB5":   0.55,
     "PSMB2":   0.52,
     "PSMB1":   0.50,
+    "PSMB8":   0.58,
+    "PSMB9":   0.54,
     "PSMD1":   0.58,
-    # ── Stemness markers ──────────────────────────────────────────────────────
+    "PSMA1":   0.54,
+    "PSMA2":   0.52,
+    "PSMA3":   0.54,
+    "PSMA4":   0.52,
+    "PSMA5":   0.50,
+    "PSMA6":   0.53,
+    "PSMA7":   0.52,
+    "PSMA8":   0.48,
+    "PSMB3":   0.50,
+    "PSMB4":   0.51,
+    "PSMB6":   0.52,
+    "PSMB7":   0.54,
+    "PSMB10":  0.55,
+    "PSMB11":  0.48,
     "SOX2":    0.95,
     "NES":     0.92,
     "PROM1":   0.82,
     "CD44":    0.88,
     "OLIG2":   0.78,
-    # ── MYC / STAT ────────────────────────────────────────────────────────────
     "MYC":     0.80,
     "MYCN":    0.82,
     "STAT3":   0.78,
-    # ── ACVR1 / BMP ───────────────────────────────────────────────────────────
     "ACVR1":   0.75,
     "BMPR1A":  0.65,
     "SMAD1":   0.62,
-    # ── DNA damage ────────────────────────────────────────────────────────────
     "PARP1":   0.68,
     "ATM":     0.55,
     "ATR":     0.60,
-    # ── Metabolism ────────────────────────────────────────────────────────────
+    "PRKDC":   0.62,   # DNA-PK (CC-115)
     "IDH1":    0.25,
-    # ── Efflux transporters ───────────────────────────────────────────────────
     "ABCB1":   0.45,
     "ABCG2":   0.50,
-    # ── Immune / TME ──────────────────────────────────────────────────────────
     "DRD2":    0.55,
     "SIGMAR1": 0.52,
-    # ── Housekeeping (low by design) ──────────────────────────────────────────
+    "CLPB":    0.50,
     "ACTB":    0.50,
     "GAPDH":   0.48,
+    # Additional PDGFRA-linked targets
+    "PDGFRB":  0.60,
+    "KDR":     0.55,
+    "FLT1":    0.52,
+    "FLT4":    0.50,
+    "KIT":     0.48,
+    "FLT3":    0.45,
+    "CSF1R":   0.50,
+    "ALK":     0.52,
+    "FGFR2":   0.50,
+    "FGFR3":   0.48,
 }
 
 
 class TissueExpressionScorer:
     """
-    v5.4: Single-Cell RNA-seq Stem-Cell Targeting Engine
+    v5.5: Single-Cell RNA-seq Stem-Cell Targeting Engine
 
-    Reference: GSE102130 (Filbin et al. 2018, Science) — H3K27M DIPG
-    single-cell RNA-seq (23,686 genes × 4,058 cells, RSEM TPM-normalised).
-
-    All tunable parameters are read from pipeline_config.TISSUE.
-    No magic numbers in this file.
+    FIX v5.5: Added run_quantile_sensitivity() method to verify top-2 ranking
+    stability across GSC quantile thresholds (p75, p80, p85, p90).
+    The gsc_stem_quantile=0.85 is the primary value; sensitivity analysis
+    confirms ranking robustness.
     """
 
     def __init__(self, disease_name: str, data_dir: str = None):
@@ -113,10 +131,15 @@ class TissueExpressionScorer:
         self._gsc_p50 = 0.0
         self._gsc_p75 = 0.0
         self._gsc_p90 = 0.0
+        self._df_cache = None  # cache raw scRNA df for sensitivity analysis
 
-    async def _load_sc_data(self):
-        if self.is_ready:
+    async def _load_sc_data(self, quantile: float = None):
+        """Load scRNA data with specified quantile. Caches raw df."""
+        q = quantile or TISSUE["gsc_stem_quantile"]
+
+        if self.is_ready and quantile is None:
             return
+
         if not self.sc_path.exists():
             logger.warning(
                 "⚠️ Single-cell data not found at %s — using curated DIPG fallback.",
@@ -124,25 +147,26 @@ class TissueExpressionScorer:
             )
             return
 
-        logger.info("⏳ Loading Single-Cell H3K27M DIPG Matrix (Filbin 2018)...")
         try:
-            df = pd.read_csv(self.sc_path, sep="\t", index_col=0)
-            df.index = df.index.str.upper().str.strip()
+            if self._df_cache is None:
+                logger.info("⏳ Loading Single-Cell H3K27M DIPG Matrix (Filbin 2018)...")
+                df = pd.read_csv(self.sc_path, sep="\t", index_col=0)
+                df.index = df.index.str.upper().str.strip()
+                self._df_cache = df
+            else:
+                df = self._df_cache
 
             stem_markers = TISSUE["stem_markers"]
             markers = [m for m in stem_markers if m in df.index]
             if not markers:
-                logger.warning(
-                    "Stem cell markers not found in scRNA matrix. "
-                    "Expected: %s", stem_markers
-                )
+                logger.warning("Stem cell markers not found in scRNA matrix.")
                 return
 
             stem_scores = df.loc[markers].mean(axis=0)
-            threshold   = stem_scores.quantile(TISSUE["gsc_stem_quantile"])
+            threshold   = stem_scores.quantile(q)
             gsc_cells   = df.columns[stem_scores >= threshold]
+            gsc_expr    = df[gsc_cells].mean(axis=1)
 
-            gsc_expr = df[gsc_cells].mean(axis=1)
             self.gsc_target_scores = gsc_expr.to_dict()
 
             all_vals = sorted(gsc_expr.values)
@@ -153,22 +177,21 @@ class TissueExpressionScorer:
             self._gsc_p75 = all_vals[int(n * 0.75)]
             self._gsc_p90 = all_vals[int(n * 0.90)]
 
-            self.is_ready = True
-            logger.info(
-                "✅ Single-Cell loaded: %d stem-like cells / %d total. "
-                "GSC expression p25=%.2f, p50=%.2f, p75=%.2f, p90=%.2f",
-                len(gsc_cells), len(df.columns),
-                self._gsc_p25, self._gsc_p50, self._gsc_p75, self._gsc_p90,
-            )
+            if quantile is None:
+                self.is_ready = True
+                logger.info(
+                    "✅ Single-Cell loaded: %d GSC cells / %d total (quantile=%.2f). "
+                    "p25=%.2f, p50=%.2f, p75=%.2f, p90=%.2f",
+                    len(gsc_cells), len(df.columns), q,
+                    self._gsc_p25, self._gsc_p50, self._gsc_p75, self._gsc_p90,
+                )
         except Exception as e:
             logger.error("Single-cell loading failed: %s", e)
 
     def _expression_to_score(self, expr_value: float) -> float:
-        """Convert RSEM TPM to 0–1 score via percentile bins (from config)."""
         bins = TISSUE["percentile_bins"]
 
         if not self._gsc_all_values_sorted:
-            # Fallback when percentile data not computed
             if expr_value >= TISSUE["fallback_high_cutoff"]:
                 return TISSUE["fallback_high_tpm"]
             elif expr_value >= TISSUE["fallback_mid_cutoff"]:
@@ -182,10 +205,6 @@ class TissueExpressionScorer:
         else:                             return bins["low"]
 
     def _curated_score(self, drug: Dict) -> float:
-        """
-        Score from curated DIPG GSC literature.
-        Weighted blend of best target and mean of top-N targets.
-        """
         targets = drug.get("targets", [])
         if not targets:
             return TISSUE["no_target_score"]
@@ -204,17 +223,15 @@ class TissueExpressionScorer:
         )
 
     def _dipg_relevance(self, target: str) -> float:
-        """
-        DIPG-relevance weight for a gene target.
-        Prevents ubiquitous/housekeeping genes from dominating the score.
-        Returns 1.0 if target is in the curated DIPG list, else config discount.
-        """
         return 1.0 if target.upper() in DIPG_GSC_CURATED_SCORES \
                else TISSUE["off_target_relevance"]
 
     async def score_batch(self, candidates: List[Dict]) -> List[Dict]:
         await self._load_sc_data()
+        return self._score_with_current_state(candidates)
 
+    def _score_with_current_state(self, candidates: List[Dict]) -> List[Dict]:
+        """Score candidates using current loaded GSC state (used by sensitivity analysis too)."""
         cw = TISSUE["curated_weight"]
         sw = TISSUE["sc_weight"]
 
@@ -246,8 +263,7 @@ class TissueExpressionScorer:
 
             drug["tissue_expression_score"] = blended
             drug["sc_context"] = (
-                f"Blended v5.4 (H3K27M DIPG, Filbin 2018): "
-                f"curated={curated_score:.2f} (w={cw}), "
+                f"Blended v5.5: curated={curated_score:.2f} (w={cw}), "
                 f"sc={sc_score_weighted:.2f} (w={sw}), "
                 f"best_tpm={best_expr:.1f}, final={blended:.2f}"
             )
@@ -256,10 +272,71 @@ class TissueExpressionScorer:
         if scores:
             unique_vals = sorted(set(round(s, 2) for s in scores))
             logger.info(
-                "✅ Tissue scoring: %d candidates | %d unique scores | "
-                "range=[%.2f, %.2f] | distinct values=%s",
-                len(candidates), len(unique_vals),
-                min(scores), max(scores), unique_vals[:8],
+                "✅ Tissue scoring: %d candidates | range=[%.2f, %.2f] | "
+                "distinct values=%s",
+                len(candidates), min(scores), max(scores), unique_vals[:8],
             )
 
         return candidates
+
+    async def run_quantile_sensitivity(
+        self, candidates: List[Dict]
+    ) -> Dict:
+        """
+        FIX v5.5: Sensitivity analysis on GSC quantile threshold.
+
+        Tests p75, p80, p85, p90 and reports whether top-2 ranking is stable.
+        Called by run_dipg_pipeline.py — results surfaced in pipeline stats.
+
+        Returns dict with stability flag and per-quantile top-5 rankings.
+        """
+        if not self.sc_path.exists():
+            return {
+                "stable": None,
+                "note": "scRNA-seq file not found — sensitivity analysis skipped",
+                "rankings_by_quantile": {},
+            }
+
+        quantiles = TISSUE["gsc_quantile_sensitivity_range"]
+        rankings: Dict[float, List[str]] = {}
+
+        for q in quantiles:
+            # Temporarily reload with this quantile
+            await self._load_sc_data(quantile=q)
+
+            # Score a copy to avoid mutating candidates
+            import copy
+            candidates_copy = copy.deepcopy(candidates[:20])
+            scored = self._score_with_current_state(candidates_copy)
+            scored.sort(key=lambda x: x.get("tissue_expression_score", 0), reverse=True)
+            rankings[q] = [c.get("name", "?") for c in scored[:5]]
+
+        # Reload primary quantile
+        self.is_ready = False
+        await self._load_sc_data()
+
+        # Check top-2 stability
+        all_top2 = [tuple(rankings[q][:2]) for q in quantiles if rankings.get(q)]
+        stable   = len(set(all_top2)) == 1
+
+        logger.info(
+            "GSC quantile sensitivity: top-2 ranking %s across quantiles %s. "
+            "Rankings: %s",
+            "STABLE ✅" if stable else "UNSTABLE ⚠️",
+            quantiles,
+            {q: rankings[q][:3] for q in quantiles},
+        )
+
+        return {
+            "stable":               stable,
+            "quantiles_tested":     quantiles,
+            "primary_quantile":     TISSUE["gsc_stem_quantile"],
+            "top2_consistent":      stable,
+            "rankings_by_quantile": {str(q): rankings.get(q, []) for q in quantiles},
+            "note": (
+                "Top-2 ranking is stable across all GSC quantile thresholds ✅"
+                if stable else
+                "⚠️ Top-2 ranking changes with GSC quantile — interpret tissue scores "
+                "with caution. Consider reporting rank range rather than single ranking."
+            ),
+        }

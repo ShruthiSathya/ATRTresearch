@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, List, Tuple, Optional
 
-from .pipeline_config import BBB as BBB_CONFIG
+from .pipeline_config import BBB as BBB_CONFIG, BBB_EXTENDED_KNOWN
 
 logger = logging.getLogger(__name__)
 
@@ -10,18 +10,15 @@ KNOWN_BBB_PENETRANCE: Dict[str, str] = {
     # ── HIGH ──────────────────────────────────────────────────────────────────
     "temozolomide":   "HIGH",
     "onc201":         "HIGH",
-    "panobinostat":   "HIGH",    # PBTC-047 confirmed CNS exposure (Monje 2023)
-    "abemaciclib":    "HIGH",    # Designed for CNS penetrance vs palbociclib
+    "panobinostat":   "HIGH",
+    "abemaciclib":    "HIGH",
     "dexamethasone":  "HIGH",
     "lomustine":      "HIGH",
     "carmustine":     "HIGH",
-    "marizomib":      "HIGH",    # Engineered for CNS — crosses BBB unlike bortezomib
+    "marizomib":      "HIGH",
     "thioridazine":   "HIGH",
     "valproic acid":  "HIGH",
     "chloroquine":    "HIGH",
-    # Paxalisib: designed as brain-penetrant PI3K/mTOR inhibitor (Genentech).
-    # FDA Orphan Drug for DIPG (2020). Pediatric Phase I (NCT03696355) and
-    # Phase II (NCT05009992). CNS penetrance by design and preclinical PK.
     "paxalisib":      "HIGH",
     "gdc-0084":       "HIGH",
 
@@ -30,10 +27,10 @@ KNOWN_BBB_PENETRANCE: Dict[str, str] = {
     "metformin":      "MODERATE",
     "itraconazole":   "MODERATE",
     "ribociclib":     "MODERATE",
-    "birabresib":     "MODERATE",  # PBTC-049 confirmed brain exposure (Geoerger 2017)
+    "birabresib":     "MODERATE",
     "vorinostat":     "MODERATE",
-    "onatasertib":    "MODERATE",  # mTOR kinase; class analogue AZD-8055 shows CNS exposure
-    "indoximod":      "MODERATE",  # IDO inhibitor; pediatric DIPG trial ongoing NCT04049669
+    "onatasertib":    "MODERATE",
+    "indoximod":      "MODERATE",
     "lapatinib":      "MODERATE",
     "erlotinib":      "MODERATE",
     "gefitinib":      "MODERATE",
@@ -56,6 +53,11 @@ KNOWN_BBB_PENETRANCE: Dict[str, str] = {
     "bortezomib":     "LOW",
 }
 
+# FIX: Merge extended known BBB data from pipeline_config
+# This fills in UNKNOWN gaps for drugs ranked in top-20 (AZD-8055, crizotinib, etc.)
+KNOWN_BBB_PENETRANCE.update(BBB_EXTENDED_KNOWN)
+
+
 KNOWN_GBM_FAILURES = {
     "cilengitide", "enzastaurin", "temsirolimus", "cediranib", "iniparib",
     "vorinostat", "erlotinib", "gefitinib", "imatinib", "tipifarnib",
@@ -68,7 +70,8 @@ KNOWN_GBM_FAILURES = {
 class BBBFilter:
     """
     Blood-brain barrier filter and scorer.
-    All numeric thresholds read from pipeline_config.BBB — no magic numbers.
+    v5.5: UNKNOWN score changed from 0.5 → 0.4 (unknown ≠ moderate).
+          Extended known list merged from pipeline_config.BBB_EXTENDED_KNOWN.
     """
 
     def __init__(self, hard_exclude_mw: float = None):
@@ -78,6 +81,12 @@ class BBBFilter:
     def score_drug(self, drug_name: str,
                    molecular_weight: Optional[float] = None) -> Dict:
         name_lower = drug_name.lower().strip()
+
+        # Strip common salt suffixes for matching
+        for suffix in (" hydrochloride", " hcl", " sodium", " mesylate",
+                       " malate", " phosphate", " sulfate", " mafodotin"):
+            name_lower = name_lower.replace(suffix, "")
+        name_lower = name_lower.strip()
 
         # Hard MW exclusion
         if molecular_weight and molecular_weight > self.hard_exclude_mw:
@@ -98,7 +107,7 @@ class BBBFilter:
                 "clinical_failure": True,
             }
 
-        # Curated PK database
+        # Curated PK database (primary + extended)
         if name_lower in KNOWN_BBB_PENETRANCE:
             penetrance = KNOWN_BBB_PENETRANCE[name_lower]
             return {
@@ -126,6 +135,8 @@ class BBBFilter:
                         "reason": f"MW {molecular_weight:.0f} > {BBB_CONFIG['mw_low_cutoff']:.0f} Da (heuristic)",
                         "clinical_failure": False}
 
+        # FIX: UNKNOWN score is now 0.4 (from config), not 0.5
+        # Unknown BBB ≠ MODERATE — lack of data should be penalised mildly.
         return {
             "penetrance": "UNKNOWN",
             "bbb_score":  BBB_CONFIG["unknown_score"],
