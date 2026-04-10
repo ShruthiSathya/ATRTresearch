@@ -1,39 +1,58 @@
-# Production Requirements for Drug Repurposing Platform
-# All packages are open-source and free to use
+# ATRT Drug Repurposing Pipeline — Python Dependencies
+# All packages are open-source.
+# Tested with Python 3.11.
 
-# Web Framework
+# ── Web framework ─────────────────────────────────────────────────────────────
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 
-# HTTP Client (for API calls) - WITH SSL FIX
+# ── Async HTTP (pipeline API calls: OpenTargets, STRING-DB, clue.io) ─────────
 aiohttp==3.10.5
-certifi==2024.8.30  # Up-to-date SSL certificates
-requests==2.31.0
+certifi==2024.8.30        # up-to-date SSL certificates
+requests==2.32.3          # synchronous fallback (prepare_cmap_query.py MyGene.info)
 
-# Data Processing
+# ── Data processing ───────────────────────────────────────────────────────────
+pandas==2.2.3
+numpy==1.26.4
 pydantic==2.9.2
 python-dotenv==1.0.1
 
-# Graph Analysis
+# ── Scientific computing ──────────────────────────────────────────────────────
+scipy==1.14.1
+scikit-learn==1.5.2       # calibration.py — LogisticRegression, IsotonicRegression
+                          # NOTE: import as 'from sklearn...' not 'from scikit_learn'
+
+# ── Graph analysis (PPI network) ──────────────────────────────────────────────
 networkx==3.3
 
-# Database & Caching
+# ── DepMap HDF5 / CMap GCTX files ────────────────────────────────────────────
+h5py==3.12.1              # for reading .gctx files (CMap L1000)
+# cmapPy                  # optional — only needed for local .gctx mode
+#                         # install separately: pip install cmapPy
+
+# ── GEO data download (optional — alternative to manual download) ─────────────
+# GEOparse==2.0.3         # uncomment to enable automatic GSE70678 download
+#                         # install separately if needed
+
+# ── Caching and storage ───────────────────────────────────────────────────────
 aiosqlite==0.20.0
-sqlalchemy==2.0.23
+sqlalchemy==2.0.36
 
-# Scientific Computing
-numpy==1.26.4
-scipy>=1.14.1
-scikit-learn==1.8.0
-rdkit
+# ── Figures (generate_figures.py) ────────────────────────────────────────────
+matplotlib==3.9.2
 
-# Anthropic API (for AI explanations)
+# ── Anthropic API (AI explanations, optional) ────────────────────────────────
 anthropic==0.40.0
 
-# Rate Limiting & Retry Logic
-tenacity==8.2.3
+# ── Retry logic ──────────────────────────────────────────────────────────────
+tenacity==8.5.0
 
-# Testing
-pytest==7.4.4
-pytest-asyncio==0.23.0
-httpx==0.26.0
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest==8.3.3
+pytest-asyncio==0.24.0
+httpx==0.27.2             # used by FastAPI TestClient
+
+# ── NOT included (intentionally) ─────────────────────────────────────────────
+# rdkit — heavy dependency, not required by current pipeline code.
+#         Install separately with: conda install -c rdkit rdkit
+#         or: pip install rdkit-pypi

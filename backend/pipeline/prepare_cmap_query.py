@@ -83,7 +83,7 @@ def load_rna_data() -> pd.DataFrame:
             "  \""
         )
     logger.info(f"Loading {RNA_PATH}...")
-    df = pd.read_csv(RNA_PATH, sep="\t", index_col=0)
+    df = pd.read_csv(RNA_PATH, sep="\t", comment="!", index_col=0)
     df.index = df.index.astype(str).str.upper().str.strip()
     # Collapse duplicate gene symbols — take max expression
     df = df.groupby(level=0).max()

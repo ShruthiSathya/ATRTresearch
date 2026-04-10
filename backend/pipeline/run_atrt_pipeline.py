@@ -57,6 +57,7 @@ class ATRTPipelineValidator:
         self.data_dir = Path(data_dir)
         # Lazy import to avoid circular dependency
         from .atrt_pipeline_config import ATRT_GENOMICS
+        from .pipeline_config import GENOMICS as ATRT_GENOMICS
         self.config = ATRT_GENOMICS
 
     def validate_atrt_cohort(self) -> Dict:
