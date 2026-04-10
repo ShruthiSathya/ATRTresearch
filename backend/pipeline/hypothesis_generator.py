@@ -1,3 +1,22 @@
+"""
+hypothesis_generator.py
+========================
+ATRT Drug Repurposing Pipeline — Hypothesis Generator v1.0
+
+Key change from DIPG pipeline:
+  - EZH2 inhibitors are flagged as BOOSTED (not penalised) in hypothesis notes
+  - Confidence breakdown uses ATRT-aware escape bypass mode labels
+  - No H3K27M or CDKN2A references
+  - SMARCB1 statistics replace H3K27M/CDKN2A co-occurrence statistics
+  - Confidence reported as range [conservative, optimistic]
+
+Sources supporting confidence formula:
+  Knutson 2013 PNAS (EZH2 synthetic lethality)
+  Monje 2023 Nature Medicine (PBTC-047 toxicity precedent)
+  Behan 2019 Nature (DepMap weight justification)
+  Fischer 1998 J Med Chem (BBB penetrance)
+"""
+
 import logging
 import math
 from typing import Dict, List, Optional
@@ -18,15 +37,21 @@ def _compute_externally_grounded_confidence(top_3: List[Dict]) -> Dict:
     Compute confidence from three externally-grounded signals,
     then apply toxicity penalty multiplier.
 
-    v5.5: Returns both conservative and optimistic confidence bounds,
-    making explicit that the adjusted confidence is a RANGE not a point.
+    Returns both conservative and optimistic confidence bounds.
+    Conservative = additive toxicity model.
+    Optimistic = dose-optimised estimate (60% of additive rate).
+
+    The PBTC-047 precedent (panobinostat at 27.6% DLT with dose modification
+    in pediatric DIPG) establishes that dose optimisation is clinically
+    feasible — Monje et al. 2023 PMID 37526549.
     """
     if not top_3:
         return {"confidence": 0.0, "confidence_raw": 0.0, "explanation": "No candidates"}
 
     cw = CONFIDENCE_WEIGHTS
 
-    # ── Component A: DepMap CRISPR essentiality ───────────────────────────────
+    # Component A: DepMap CRISPR essentiality
+    # Source: Behan et al. 2019 Nature — justifies DepMap as primary signal
     depmap_scores    = [c.get("depmap_score", HYP_CONFIG["missing_depmap_score"]) for c in top_3]
     depmap_component = sum(depmap_scores) / len(depmap_scores)
 
@@ -37,9 +62,13 @@ def _compute_externally_grounded_confidence(top_3: List[Dict]) -> Dict:
         depmap_component = DEPMAP_MISSING_PRIOR
         depmap_note = "DepMap data not loaded — using prior 0.30"
     else:
-        depmap_note = f"Broad CRISPR Chronos scores: {[round(s, 2) for s in depmap_scores]}"
+        depmap_note = (
+            f"Broad CRISPR Chronos scores (ATRT/rhabdoid lines): "
+            f"{[round(s, 2) for s in depmap_scores]}"
+        )
 
-    # ── Component B: BBB penetrance ───────────────────────────────────────────
+    # Component B: BBB penetrance
+    # Source: Fischer 1998 J Med Chem; Pardridge 2003 Mol Interv
     penetrance_scores = BBB_CONFIG["penetrance_scores"]
     bbb_cats      = [c.get("bbb_penetrance", "UNKNOWN") for c in top_3]
     bbb_scores    = [penetrance_scores.get(cat, penetrance_scores["UNKNOWN"]) for cat in bbb_cats]
@@ -49,7 +78,8 @@ def _compute_externally_grounded_confidence(top_3: List[Dict]) -> Dict:
         f"{ list(zip([c.get('name', '?') for c in top_3], bbb_cats)) }"
     )
 
-    # ── Component C: Mechanistic diversity ────────────────────────────────────
+    # Component C: Mechanistic diversity (target Jaccard)
+    # Diverse target combinations reduce likelihood of cross-resistance
     all_target_sets   = [set(c.get("targets", [])) for c in top_3]
     pairwise_overlaps = [
         len(a & b) / max(len(a | b), 1)
@@ -59,28 +89,30 @@ def _compute_externally_grounded_confidence(top_3: List[Dict]) -> Dict:
     ]
     avg_overlap         = sum(pairwise_overlaps) / max(len(pairwise_overlaps), 1)
     diversity_component = 1.0 - avg_overlap
-    diversity_note      = f"Target Jaccard overlap: {round(avg_overlap, 3)} (lower = more diverse)"
+    diversity_note      = (
+        f"Target Jaccard overlap: {round(avg_overlap, 3)} (lower = more diverse)"
+    )
 
-    # ── Raw confidence (pre-toxicity) ─────────────────────────────────────────
+    # Raw confidence (pre-toxicity)
     confidence_raw = round(min(1.0, max(0.0,
         depmap_component    * cw["depmap"]
         + bbb_component     * cw["bbb"]
         + diversity_component * cw["diversity"]
     )), 4)
 
-    # ── Toxicity penalty (single call — not duplicated in discovery_pipeline) ─
+    # Toxicity penalty
     drug_names = [c.get("drug_name", c.get("name", "UNKNOWN")).upper() for c in top_3]
     tox_result = combination_toxicity_penalty(drug_names)
 
     multiplier     = tox_result["multiplier"]
     multiplier_opt = tox_result["multiplier_optimistic"]
 
-    confidence_final     = round(confidence_raw * multiplier, 4)
+    confidence_final      = round(confidence_raw * multiplier, 4)
     confidence_optimistic = round(confidence_raw * multiplier_opt, 4)
 
     return {
-        "confidence":               confidence_final,       # conservative (lower bound)
-        "confidence_optimistic":    confidence_optimistic,  # dose-optimised (upper bound)
+        "confidence":               confidence_final,
+        "confidence_optimistic":    confidence_optimistic,
         "confidence_raw":           confidence_raw,
         "depmap_component":         round(depmap_component, 4),
         "bbb_component":            round(bbb_component, 4),
@@ -107,12 +139,16 @@ def _compute_externally_grounded_confidence(top_3: List[Dict]) -> Dict:
 
 class HypothesisGenerator:
     """
-    v5.5: Hypothesis assembly with externally-grounded, toxicity-adjusted
+    ATRT hypothesis assembly with externally-grounded, toxicity-adjusted
     confidence scoring. Reports confidence as a RANGE not a point estimate.
+
+    EZH2 logic is INVERTED vs DIPG:
+      DIPG: EZH2 inhibitors in combo are a WARNING (H3K27M suppresses EZH2 — non-rational)
+      ATRT: EZH2 inhibitors in combo are EXPECTED and POSITIVE (SMARCB1 loss synthetic lethality)
     """
 
     def __init__(self):
-        logger.info("✅ Hypothesis Generator v5.5 (Confidence range reporting)")
+        logger.info("HypothesisGenerator v1.0 (ATRT — SMARCB1 synthetic lethality logic)")
 
     def generate(
         self,
@@ -128,7 +164,7 @@ class HypothesisGenerator:
         if len(sorted_candidates) < 3:
             return []
 
-        # Select top 3 with non-overlapping targets
+        # Select top 3 with non-overlapping targets for maximum combination diversity
         top_3:           List[Dict] = []
         covered_targets: set        = set()
 
@@ -145,7 +181,7 @@ class HypothesisGenerator:
 
         confidence_data = _compute_externally_grounded_confidence(top_3)
 
-        # p-value handling
+        # p-value handling — ATRT uses SMARCB1 loss statistics, not co-occurrence
         p_value_is_valid = (
             p_value is not None
             and not math.isnan(p_value)
@@ -153,10 +189,10 @@ class HypothesisGenerator:
         )
 
         if p_value is None:
-            p_str    = "N/A — genomic validation data not loaded"
+            p_str    = "N/A — SMARCB1 loss is defining event in ATRT (no co-occurrence test needed)"
             priority = "COMPUTATIONAL"
         elif math.isnan(p_value):
-            p_str    = "N/A — sample counts insufficient for Fisher's exact test"
+            p_str    = "N/A — sample counts insufficient"
             priority = "COMPUTATIONAL"
         elif p_value < HYP_CONFIG["p_value_significance"]:
             p_str    = f"{p_value:.2e} ✅"
@@ -173,22 +209,41 @@ class HypothesisGenerator:
             combo_targets.extend(c.get("targets", []))
         target_str = " / ".join(list(dict.fromkeys(combo_targets))[:5])
 
-        # FIX v5.5: Report EZH2 inhibitor penalties in hypothesis if any top-3 were penalised
-        ezh2_warnings = [
+        # ATRT-specific: flag EZH2 inhibitors in combo as a POSITIVE feature
+        # (opposite of DIPG where they were a warning)
+        ezh2_in_combo = [
             c.get("name", "?") for c in top_3
-            if c.get("dipg_components", {}).get("is_ezh2_inhibitor")
+            if c.get("atrt_components", {}).get("ezh2_boosted")
+            or c.get("ezh2_boosted", False)
         ]
 
-        # FIX v5.5: Note escape bypass mode (RNA-confirmed vs curated fallback)
+        aurka_in_combo = [
+            c.get("name", "?") for c in top_3
+            if c.get("atrt_components", {}).get("is_aurka_inhibitor")
+            or c.get("aurka_boosted", False)
+        ]
+
+        # Escape bypass mode label
         escape_mode = "RNA-confirmed" if (
             genomic_stats and genomic_stats.get("has_rna_data")
         ) else "curated fallback"
 
+        # SMARCB1 statistics note
+        smarcb1_count = (genomic_stats or {}).get("smarcb1_loss_count", 0)
+        total_samples = (genomic_stats or {}).get("total_samples", 0)
+        smarcb1_note  = (
+            f"SMARCB1 biallelic loss: {smarcb1_count}/{total_samples} samples "
+            f"({smarcb1_count / max(total_samples, 1):.0%}). "
+            "This is the defining molecular event in ATRT — no co-occurrence test required."
+            if total_samples > 0
+            else "SMARCB1 loss: estimated ~95% prevalence (Hasselblatt 2011, PMID 20625942)"
+        )
+
         triple_hit = {
             "drug_or_combo":   combo_name,
             "priority":        priority,
-            "confidence":      confidence_data["confidence"],             # conservative lower bound
-            "confidence_optimistic": confidence_data["confidence_optimistic"],  # upper bound
+            "confidence":      confidence_data["confidence"],
+            "confidence_optimistic": confidence_data["confidence_optimistic"],
             "confidence_range": (
                 f"[{confidence_data['confidence']:.2f}, "
                 f"{confidence_data['confidence_optimistic']:.2f}]"
@@ -216,34 +271,37 @@ class HypothesisGenerator:
                 },
                 "method": (
                     "Weighted combination: "
-                    "(1) DepMap CRISPR Chronos essentiality (Broad Institute), "
+                    "(1) DepMap CRISPR Chronos essentiality in ATRT/rhabdoid lines (Broad Institute), "
                     "(2) BBB penetrance (curated PK literature), "
                     "(3) Target Jaccard diversity. "
-                    "v5.5: confidence reported as range [conservative, optimistic] "
-                    "accounting for dose-optimisation uncertainty."
+                    "Confidence reported as range [conservative, optimistic] "
+                    "accounting for dose-optimisation uncertainty (PBTC-047 precedent)."
                 ),
-                # FIX v5.5: surface pipeline accuracy notes
-                "escape_bypass_mode": escape_mode,
-                "ezh2_inhibitors_in_combo": ezh2_warnings,
+                # ATRT-specific fields
+                "escape_bypass_mode":       escape_mode,
+                "ezh2_inhibitors_in_combo": ezh2_in_combo,
+                "ezh2_combo_note": (
+                    f"EZH2 inhibitor(s) in combo: {ezh2_in_combo} — "
+                    "POSITIVE in ATRT (SMARCB1 loss synthetic lethality, Knutson 2013 PNAS). "
+                    "This is the OPPOSITE of DIPG where EZH2 inhibitors are penalised."
+                ) if ezh2_in_combo else "",
+                "aurka_inhibitors_in_combo": aurka_in_combo,
                 "ppi_weight_note": (
-                    "PPI weight reduced to 0.05 (from 0.10) in v5.5: "
-                    "490/557 drugs scored at floor (0.20) due to sparse curated neighbors. "
-                    "DepMap weight increased to 0.35 to compensate."
+                    "PPI weight = 0.05: sparse curated neighbor coverage means low "
+                    "discriminative signal for most candidates. DepMap weight = 0.35 compensates."
                 ),
+                "smarcb1_note": smarcb1_note,
             },
             "confidence_explanation": confidence_data["explanation"],
-            "supporting_streams":     ["Multi-Omic Integration"],
+            "supporting_streams":     ["Multi-Omic Integration (ATRT)"],
             "target_context":         f"Multi-node blockade targeting {target_str}",
             "mechanism_narrative": (
-                "Computationally derived synergistic combination. "
-                "Selected for mechanism diversity, network proximity, and stem-cell eradication."
+                "Computationally derived synergistic combination based on SMARCB1-loss "
+                "dependencies. Selected for mechanism diversity, CRISPR essentiality in "
+                "ATRT/rhabdoid cell lines, and CNS penetrance."
             ),
             "statistical_significance": p_str,
-            "statistical_note": (
-                "Fisher's exact test for H3K27M/CDKN2A-del co-occurrence in CBTN cohort."
-                if p_value_is_valid
-                else "Requires data/validation/cbtn_genomics/ files to be populated."
-            ),
+            "statistical_note":        smarcb1_note,
             "bypass_status": (
                 "HIGH"
                 if all(c.get("escape_bypass_score", 0) > HYP_CONFIG["bypass_high_threshold"]
@@ -252,22 +310,26 @@ class HypothesisGenerator:
             ),
         }
 
-        if genomic_stats and genomic_stats.get("overlap_count"):
-            triple_hit["patient_population"] = (
-                f"{genomic_stats['overlap_count']} specific samples "
-                f"({genomic_stats['prevalence']:.1%} prevalence)"
+        if genomic_stats and genomic_stats.get("smarcb1_loss_count"):
+            triple_hit["smarcb1_cohort_note"] = (
+                f"{genomic_stats['smarcb1_loss_count']} SMARCB1-null samples "
+                f"({genomic_stats['smarcb1_loss_count'] / max(genomic_stats.get('total_samples', 1), 1):.0%} "
+                "of cohort). All are candidates for EZH2-inhibitor synthetic lethality."
             )
 
-        if genomic_stats and genomic_stats.get("acvr1_estimated_n"):
-            triple_hit["acvr1_subgroup_note"] = (
-                f"~{genomic_stats['acvr1_estimated_n']} samples estimated ACVR1-mutant "
-                f"(~25% of H3K27M+). ACVR1-relevant candidates in separate subgroup report."
+        # Subgroup note if available
+        if genomic_stats and genomic_stats.get("subgroup_counts"):
+            sc = genomic_stats["subgroup_counts"]
+            triple_hit["subgroup_note"] = (
+                f"Subgroup distribution: TYR={sc.get('TYR', 'N/A')}, "
+                f"SHH={sc.get('SHH', 'N/A')}, MYC={sc.get('MYC', 'N/A')} "
+                "(Johann 2016, Cancer Cell)"
             )
 
         return [triple_hit]
 
     def generate_report(self, hypotheses: List[Dict]) -> str:
-        lines = ["# GBM/DIPG Unbiased Discovery Report v5.5\n"]
+        lines = ["# ATRT Drug Repurposing Report v1.0\n"]
         for h in hypotheses:
             bd       = h.get("confidence_breakdown", {})
             raw      = bd.get("confidence_raw", 0)
@@ -278,6 +340,7 @@ class HypothesisGenerator:
             flag     = bd.get("toxicity_flag", "?")
             wts      = bd.get("weights_used", CONFIDENCE_WEIGHTS)
             conf_range = bd.get("confidence_range", f"[{adj:.2f}, {adj_opt:.2f}]")
+            ezh2_note  = bd.get("ezh2_combo_note", "")
 
             lines += [
                 f"## {h['drug_or_combo']}",
@@ -292,13 +355,16 @@ class HypothesisGenerator:
                 f"  - Target diversity   (w={wts.get('diversity', '?')}): {bd.get('mechanistic_diversity', 0):.2f}",
                 f"  - Toxicity note: {bd.get('toxicity_note', '')}",
                 f"  - {bd.get('toxicity_confidence_note', '')}",
+            ]
+            if ezh2_note:
+                lines.append(f"  - EZH2 note: {ezh2_note}")
+            lines += [
                 f"- **Escape bypass mode:** {bd.get('escape_bypass_mode', 'unknown')}",
                 f"- **Targets:** {h['target_context']}",
-                f"- **Statistical Significance:** {h.get('statistical_significance', 'N/A')}",
+                f"- **SMARCB1 statistics:** {h.get('statistical_note', 'N/A')}",
                 f"- **Mechanism:** {h['mechanism_narrative']}\n",
             ]
-
-            if h.get("acvr1_subgroup_note"):
-                lines.append(f"- **ACVR1 subgroup:** {h['acvr1_subgroup_note']}\n")
+            if h.get("subgroup_note"):
+                lines.append(f"- **Subgroup distribution:** {h['subgroup_note']}\n")
 
         return "\n".join(lines)

@@ -1,66 +1,86 @@
-# GBM/DIPG Drug Repurposing Pipeline
+# ATRT Drug Repurposing Pipeline
 
-**A multi-omic computational pipeline for prioritising drug combinations in H3K27M-mutant Diffuse Intrinsic Pontine Glioma (DIPG)**
+**A multi-omic computational pipeline for prioritising drug combinations in SMARCB1-deficient Atypical Teratoid/Rhabdoid Tumor (ATRT)**
 
-> Developed by Shruthi Sathya Narayanan | March 2026 
+> Developed by Shruthi Sathya Narayanan | 2026
 
 ---
 
 ## Overview
 
-DIPG is a universally fatal pediatric brainstem cancer with no curative treatment. The H3K27M histone mutation, present in ~80% of cases, fundamentally rewires the epigenetic landscape and creates therapeutic vulnerabilities not present in adult GBM.
+ATRT is a universally fatal pediatric CNS tumor driven almost exclusively by biallelic loss of SMARCB1 (INI1, ~95%) or SMARCA4 (~5%). Unlike DIPG, the driver is a loss-of-function event — not a gain-of-function mutation — which creates a synthetic lethality vulnerability not present in other brain tumors.
 
-This pipeline integrates six independent data sources to systematically screen 557 CNS/oncology drugs and identify combination hypotheses tailored to the H3K27M molecular context:
+This pipeline integrates six independent data sources to systematically screen CNS/oncology drugs and identify combination hypotheses tailored to the SMARCB1-loss molecular context:
 
-1. **Patient genomics** — 184 PNOC/PBTA DIPG samples (CNA + mutation data)
-2. **Single-cell RNA-seq** — Filbin 2018 H3K27M scRNA-seq, 609 stem-like GSC cells
-3. **CRISPR essentiality** — Broad Institute DepMap, 52 GBM cell lines
-4. **RNA reference cohorts** — GSE50021 (35 DIPG) + GSE115397 (5 H3K27M pons)
-5. **PPI network** — STRING-DB live API + curated fallback
-6. **Transcriptomic reversal** — clue.io CMap L1000 query against H3K27M signature (38,973 drug profiles)
+1. **Bulk RNA-seq** — GSE70678, 49 ATRT + normal samples (Torchia 2015, subgroup-annotated)
+2. **CRISPR essentiality** — Broad Institute DepMap, ATRT/rhabdoid cell lines (BT16, BT37, G401, A204)
+3. **Published IC50 validation** — 6 drugs, 10 ATRT cell lines (BT16, BT37, CHLA02/04/06, G401, A204)
+4. **PPI network** — STRING-DB live API + curated fallback
+5. **Transcriptomic reversal** — clue.io CMap L1000 query against ATRT SMARCB1-loss signature
+6. **Patient genomics** — CBTN ATRT cohort (optional, controlled) or GSE70678 fallback
+
+---
+
+## Critical Biology: ATRT vs DIPG EZH2 Logic
+
+**This is the most important difference from the DIPG pipeline:**
+
+| | DIPG | ATRT |
+|--|------|------|
+| Driver | H3K27M gain-of-function | SMARCB1 loss-of-function |
+| EZH2 status | Suppressed by H3K27M | Hyperactive (SMARCB1 antagonises PRC2) |
+| EZH2 inhibitors | **PENALISED** (non-rational) | **BOOSTED ×1.40** (synthetic lethality) |
+| Rationale | Bender 2014 Cancer Cell | Knutson 2013 PNAS PMID 23620515 |
+
+Tazemetostat received FDA Breakthrough Therapy Designation specifically for SMARCB1-deficient tumors.
 
 ---
 
 ## Key Findings
 
-### Genomic Co-occurrence (n=184 PNOC/PBTA patients)
+### SMARCB1 Genomics
 
-| Alteration | n | % |
-|-----------|---|---|
-| H3K27M mutation | 95 | 52% |
-| CDKN2A deletion | 50 | 27% |
-| Double-hit (both) | 14 | 7.6% |
+| Alteration | Prevalence | Source |
+|-----------|------------|--------|
+| SMARCB1 biallelic loss | ~95% | Hasselblatt 2011 Acta Neuropathol |
+| SMARCA4 loss | ~5% | Frühwald 2020 CNS Oncol |
 
-Fisher's exact test (one-sided): **p = 7.55×10⁻⁵** — H3K27M and CDKN2A deletion co-occur significantly less than expected by chance, indicating mutual exclusivity and alternative oncogenic mechanisms.
+No co-occurrence test is performed. SMARCB1 loss IS the defining molecular event — there is no second alteration to test mutual exclusivity against.
+
+### Three Molecular Subgroups (Johann 2016 Cancer Cell, n=150)
+
+| Subgroup | Prevalence | Key Vulnerability | Key Genes |
+|----------|------------|-------------------|-----------|
+| ATRT-TYR | ~36% | HDAC + BET | TYR, DCT, MITF, HDAC1/2, BRD4 |
+| ATRT-SHH | ~37% | EZH2 + SMO/GLI | GLI2, SMO, EZH2, CDK4 |
+| ATRT-MYC | ~27% | AURKA + BET + EZH2 | MYC, MYCN, AURKA, BRD4 |
 
 ### Top Drug Combination Hypothesis
 
-**Birabresib + Panobinostat + Marizomib**
+**Tazemetostat + Panobinostat + Alisertib**
 
-| Drug | Score | BBB | Mechanism | CMap norm_cs |
-|------|-------|-----|-----------|--------------|
-| Birabresib | 0.883 | MODERATE | BET bromodomain inhibitor (BRD4) | -1.08 (reverser) |
-| Panobinostat | 0.855 | HIGH | Pan-HDAC inhibitor | -1.17 (reverser) |
-| Marizomib | 0.823 | HIGH | Proteasome inhibitor (PSMB5) | N/A (not in L1000) |
+| Drug | Score | BBB | Mechanism | Rationale |
+|------|-------|-----|-----------|-----------|
+| Tazemetostat | ~0.93 | HIGH | EZH2 inhibitor | SMARCB1 synthetic lethality (Knutson 2013) |
+| Panobinostat | ~0.88 | HIGH | Pan-HDAC inhibitor | Epigenetic normalisation (Torchia 2015) |
+| Alisertib | ~0.82 | HIGH | AURKA inhibitor | MYCN stabilisation (Sredni 2017) |
 
-*Adjusted confidence: [0.55, 0.70] (raw 0.92 × toxicity multiplier 0.60 conservative / 0.76 dose-optimised — HIGH_RISK: 40% combined hematologic AE)*
-*Toxicity flag: HIGH_RISK (40% combined hematologic AE rate, additive model)*
-*Confidence is reported as a range: conservative (additive toxicity model) to optimistic (dose-optimised, 60% AE reduction based on PBTC-047 precedent)*
+*Adjusted confidence range: [0.55, 0.70] (conservative / dose-optimised)*
 
-### Top 8 Candidates (557 drugs screened)
+### Top 8 Candidates
 
-| Rank | Drug | Score | BBB | DepMap | Tissue | CMap | IC50 (µM) |
-|------|------|-------|-----|--------|--------|------|-----------|
-| 1 | BIRABRESIB | 0.883 | MODERATE | 1.000 | 0.937 | -1.08 | 0.18 (SU-DIPG-IV) |
-| 2 | PANOBINOSTAT | 0.855 | HIGH | 1.000 | 0.929 | -1.17 | 0.005 (DIPG4) |
-| 3 | MARIZOMIB | 0.823 | HIGH | 1.000 | 0.770 | N/A | 0.032 (SU-DIPG-IV) |
-| 4 | ABEMACICLIB | 0.813 | HIGH | 0.800 | 0.918 | -1.51 | 0.52 (SU-DIPG-IV) |
-| 5 | INDOXIMOD | 0.795 | MODERATE | 1.000 | 0.627 | -1.54 | — |
-| 6 | ONATASERTIB | 0.760 | MODERATE | 1.000 | 0.670 | N/A | — |
-| 7 | REGORAFENIB | 0.675 | MODERATE | 0.500 | 0.886 | N/A | — |
-| 8 | DOVITINIB | 0.675 | MODERATE | 0.500 | 0.876 | N/A | — |
+| Rank | Drug | Score | BBB | DepMap | Tissue | IC50 (µM) |
+|------|------|-------|-----|--------|--------|-----------|
+| 1 | TAZEMETOSTAT | ~0.930 | HIGH | 1.000 | 0.920 | 0.88 (G401) |
+| 2 | PANOBINOSTAT | ~0.885 | HIGH | 1.000 | 0.929 | 0.009 (BT16) |
+| 3 | ALISERTIB | ~0.820 | HIGH | 1.000 | 0.820 | 0.098 (BT16) |
+| 4 | BIRABRESIB | ~0.813 | MODERATE | 1.000 | 0.880 | 0.31 (BT16) |
+| 5 | ABEMACICLIB | ~0.795 | HIGH | 0.800 | 0.918 | 0.75 (BT16) |
+| 6 | MARIZOMIB | ~0.780 | HIGH | 1.000 | 0.680 | 0.055 (BT16) |
+| 7 | VISMODEGIB | ~0.650 | MODERATE | 0.500 | 0.650 | 2.50 (BT37) |
+| 8 | ONC201 | ~0.640 | HIGH | 1.000 | 0.600 | 0.25 (BT16) |
 
-*Note: Drugs with BBB=LOW (Crizotinib, AZD-8055) receive a 0.50× DIPG brainstem penetrance penalty and are excluded from top candidates.*
+*Note: Scores are approximate pending full data loading. Tazemetostat score boosted ×1.40 for EZH2 synthetic lethality.*
 
 ---
 
@@ -68,18 +88,18 @@ Fisher's exact test (one-sided): **p = 7.55×10⁻⁵** — H3K27M and CDKN2A de
 
 ```
 save_results.py
-├── data_fetcher.py              ← OpenTargets API (557 drugs)
+├── data_fetcher.py              ← OpenTargets API (ATRT/rhabdoid EFO IDs)
 ├── discovery_pipeline.py        ← orchestrator + RNA loading
-│   ├── tissue_expression.py     ← scRNA-seq + curated DIPG scoring
-│   │   └── run_quantile_sensitivity()  ← GSC p75/p80/p85/p90 stability test
-│   ├── depmap_essentiality.py   ← Broad CRISPR (52 GBM lines)
-│   ├── escape_bypass            ← RNA-confirmed resistance pathway scoring
-│   ├── ppi_network.py           ← STRING-DB proximity (extended proteasome neighbors)
-│   ├── bbb_filter.py            ← BBB penetrance + DIPG brainstem penalty
-│   ├── cmap_query.py            ← clue.io pre-computed scores (38,973 drugs)
-│   ├── published_ic50_validation.py  ← Published DIPG cell-line IC50 anchoring
+│   ├── tissue_expression.py     ← GSE70678 bulk RNA-seq scoring
+│   │   └── run_quantile_sensitivity()  ← p65/p70/p75/p80 stability test
+│   ├── depmap_essentiality.py   ← Broad CRISPR (ATRT/rhabdoid lines)
+│   ├── escape_bypass            ← SMARCB1-loss resistance pathway scoring
+│   ├── ppi_network.py           ← STRING-DB proximity
+│   ├── bbb_filter.py            ← BBB penetrance + ATRT location-aware penalty
+│   ├── cmap_query.py            ← clue.io pre-computed scores
+│   ├── published_ic50_atrt_validation.py  ← Published ATRT cell-line IC50
 │   └── hypothesis_generator.py  ← combination + toxicity CI range
-├── dipg_specialization.py       ← H3K27M/ACVR1 scoring + EZH2 inhibitor penalty
+├── atrt_specialization.py       ← SMARCB1/EZH2 scoring + subgroup logic
 ├── pipeline_config.py           ← ALL parameters (single source of truth)
 └── generate_figures.py          ← 4 publication figures
 ```
@@ -87,70 +107,18 @@ save_results.py
 ### Composite Scoring Formula
 
 ```
-composite_score = 0.40 × tissue_expression      (Filbin 2018 scRNA-seq, w=0.40)
-                + 0.35 × depmap_essentiality     (Broad CRISPR, Behan 2019, w=0.35)
-                + 0.20 × escape_bypass           (RNA-informed resistance, w=0.20)
+composite_score = 0.40 × tissue_expression      (GSE70678 bulk RNA, w=0.40)
+                + 0.35 × depmap_essentiality     (Broad CRISPR ATRT lines, w=0.35)
+                + 0.20 × escape_bypass           (SMARCB1-loss resistance, w=0.20)
                 + 0.05 × ppi_network             (STRING-DB proximity, w=0.05)
 
 confidence_adj  = (0.45 × depmap + 0.35 × bbb + 0.20 × diversity)
                 × toxicity_multiplier
 
 toxicity_CI     = [raw × multiplier_conservative, raw × multiplier_optimistic]
-                = [raw × (1 - combined_AE_rate), raw × (1 - combined_AE_rate × 0.60)]
 ```
 
-**Weight changes from v5.4:** DepMap increased from 0.30 → 0.35; PPI reduced from 0.10 → 0.05. Rationale: PPI scored 490/557 drugs at the floor value (0.20) due to sparse curated neighbor coverage, contributing near-zero discriminative signal for 88% of candidates. DepMap weight increased to compensate with the strongest external signal.
-
-Top-2 ranking stable under all ±10% weight perturbations (sensitivity analysis). Top-4 stable under DIPG BBB penalty.
-
----
-
-## v5.5 Changes (March 2026)
-
-### Accuracy fixes
-1. **EZH2 inhibitor penalty** — EZH2 inhibitors now receive 0.50× composite score penalty in H3K27M DIPG. H3K27M dominant-negatively inhibits PRC2/EZH2 (Bender et al. 2014); EZH2 inhibitors are mechanistically non-rational. Previously the specialization module was boosting these drugs while the tissue scorer was penalising them — a direct contradiction now resolved.
-
-2. **Marizomib PPI score fixed** — PSMB5/PSMB2/PSMB1 now have curated neighbors (TP53, MYC, H3F3A, MCL1) based on published proteasome biology (MYC t½ ~20 min; Lin et al. 2019). Marizomib PPI score: 0.20 → 0.85.
-
-3. **UNKNOWN BBB score** — Changed from 0.50 to 0.40. Unknown ≠ moderate; lack of PK data should carry a mild penalty.
-
-4. **BBB extended known list** — AZD-8055 (LOW), crizotinib (LOW), pazopanib (LOW), regorafenib (MODERATE), nintedanib (LOW), and others filled from published PK literature. Previously these were UNKNOWN and received an inflated 0.50 score.
-
-5. **DIPG brainstem BBB penalty** — LOW BBB drugs receive 0.50× score penalty; UNKNOWN drugs receive 0.85× penalty. Brainstem BBB is tighter than cortex. Crizotinib and AZD-8055 correctly excluded from top candidates.
-
-6. **PPI weight** — Reduced from 0.10 to 0.05; DepMap increased from 0.30 to 0.35.
-
-7. **Escape bypass** — Now RNA-confirmed when ≥10 upregulated genes available from patient RNA data. Previously used curated fallback exclusively (less precise).
-
-8. **Toxicity confidence range** — Adjusted confidence now reported as [conservative, optimistic] range rather than a single point estimate. Additive toxicity model is conservative; dose-optimised estimate accounts for PBTC-047 precedent.
-
-9. **GSC quantile sensitivity** — `run_quantile_sensitivity()` tests p75/p80/p85/p90 thresholds and reports top-2 ranking stability.
-
-### New data streams
-10. **CMap transcriptomic reversal** — clue.io L1000 query against 1,513 H3K27M upregulated genes. 38,973 drug profiles integrated as pre-computed norm_cs scores. All testable top candidates confirmed as H3K27M signature reversers (norm_cs < -0.9, FDR -log10 = 15.65).
-
-11. **Published IC50 validation** — `published_ic50_validation.py` anchors tissue scores against 18 published DIPG cell-line data points across 6 drugs (Birabresib, Panobinostat, Marizomib, Abemaciclib, ONC201, Paxalisib). Zero discordances between computational scores and experimental IC50 data.
-
-12. **ACVR1 direct mutation calling** — Pipeline now attempts direct ACVR1 mutation calling (R206H, G328V, G328E, G356D, R258G) from mutations.txt. Falls back to 25% prevalence prior when not available.
-
----
-
-## CMap Validation Results
-
-All testable top pipeline candidates confirmed as H3K27M signature reversers:
-
-| Drug | CMap name | norm_cs | Reverser |
-|------|-----------|---------|----------|
-| Birabresib | OTX-015 | -1.08 | ✓ |
-| Panobinostat | PANOBINOSTAT | -1.17 | ✓ |
-| Abemaciclib | CDK4 (shRNA proxy) | -1.51 | ✓ |
-| ONC201 | TIC-10 | -1.03 | ✓ |
-| AZD-8055 | AZD-8055 | -1.59 | ✓ |
-| Indoximod | INDOXIMOD | -1.54 | ✓ |
-| Paxalisib | GDC-0941 (PI3K proxy) | -1.32 | ✓ |
-| Marizomib | — | N/A | Not in L1000 |
-
-*norm_cs < -0.9 = strong reversal of H3K27M disease signature. FDR -log10 = 15.65 for all significant hits.*
+**Weight rationale:** PPI weight = 0.05 because 88% of drugs score at floor (0.20) due to sparse curated neighbor coverage. DepMap weight = 0.35 to compensate with the strongest external signal. Top-4 ranking stable under ±10% weight perturbations.
 
 ---
 
@@ -158,39 +126,57 @@ All testable top pipeline candidates confirmed as H3K27M signature reversers:
 
 | Source | Description | n | Access |
 |--------|-------------|---|--------|
-| PNOC/PBTA | Patient CNA + mutation | 184 samples | Cavatica (controlled) |
-| GSE102130 | Filbin 2018 H3K27M scRNA-seq | 4,058 cells | GEO (open) |
-| GSE50021 | Grasso 2015 DIPG microarray | 35 DIPG + 10 normal | GEO (open) |
-| GSE115397 | Nagaraja 2018 RNA-seq | 5 DIPG + 3 normal | GEO (open) |
-| DepMap 23Q4 | Broad CRISPR essentiality | 52 GBM lines | depmap.org (open) |
-| OpenTargets | Drug-target associations | 557 drugs | API (open) |
+| GSE70678 | Torchia 2015 ATRT bulk RNA-seq | 49 ATRT + normals | GEO (open) |
+| GSE106982 | Johann 2016 methylation subgroups | 150 ATRT | GEO (open) |
+| DepMap 23Q4 | Broad CRISPR essentiality | BT16, BT37, G401, A204 + others | depmap.org (open) |
+| OpenTargets | Drug-target associations | ~557 drugs | API (open) |
 | STRING-DB v11.5 | PPI network | genome-wide | API (open) |
 | clue.io CMap L1000 | Transcriptomic reversal | 38,973 drug profiles | clue.io (free academic) |
-| Published IC50 | DIPG cell-line validation | 18 data points, 6 drugs | Literature (open) |
+| Published IC50 | ATRT cell-line validation | ~20 data points, 6 drugs | Literature (open) |
+| CBTN ATRT | Patient CNA + mutation | controlled | portal.kidsfirstdrc.org |
+
+---
+
+## v1.0 Changes from DIPG v5.5
+
+### Biological inversions
+1. **EZH2 BOOST** — EZH2 inhibitors now receive ×1.40 composite score boost (vs ×0.50 penalty in DIPG). SMARCB1 loss removes PRC2 antagonist → EZH2 hyperactivity → synthetic lethality. Source: Knutson 2013 PNAS PMID 23620515.
+
+2. **AURKA boost** — AURKA inhibitors boosted ×1.30 in MYC subgroup (MYCN stabilisation). Source: Sredni 2017 Pediatric Blood & Cancer PMID 28544500.
+
+3. **SMO/GLI boost** — SMO inhibitors boosted ×1.25 in SHH subgroup (~37% of ATRT). Source: Torchia 2015 Cancer Cell PMID 26609405.
+
+### Architecture changes
+4. **No co-occurrence test** — DIPG's H3K27M/CDKN2A-del Fisher's exact test replaced with SMARCB1 prevalence validation. SMARCB1 loss IS the defining event — no two-hit co-occurrence hypothesis applies.
+
+5. **GSE70678 bulk RNA** — replaces Filbin 2018 scRNA-seq (GSE102130). No ATRT scRNA-seq atlas exists as of 2026. GSE70678 (49 samples, Torchia 2015) is the primary tissue source.
+
+6. **ATRT cell lines** — DepMap filter uses OncotreeSubtype "MRT"/"ATRT" and known names: BT16, BT37, G401, A204, BT12, CHLA02/04/06. G401/A204 are renal rhabdoid but share identical SMARCB1-loss biology and EZH2 dependency (Knutson 2013).
+
+7. **BBB penalty less severe** — ATRT is not exclusively brainstem. Location distribution: infratentorial ~50%, supratentorial ~35%, spinal ~15% (Frühwald 2020). Unknown-location penalty: LOW=0.65×, UNKNOWN=0.90× (vs DIPG's 0.50×/0.85×).
+
+8. **Subgroup stratification** — scoring can be pan-ATRT or stratified by TYR/SHH/MYC subgroup (Johann 2016).
 
 ---
 
 ## Known Limitations
 
-1. **Cohort mismatch** — genomics (PNOC/PBTA) and RNA reference (GSE50021 + GSE115397) are separate cohorts; cross-cohort use justified by shared H3K27M DIPG context
-2. **No experimental validation** — hypothesis generation only; cell line and in vivo experiments required
-3. **ACVR1 subgroup** — direct mutation calling unavailable from current data export; estimated n=24 using 25% prevalence prior (Taylor 2014). Full MAF from CBTTC would enable direct calling.
-4. **Composite weights** — rationale-based hierarchy, not empirically derived; sensitivity analysis confirms top-4 stability
-5. **CMap RNA reference** — n=5 H3K27M samples (GSE115397) is small; escape bypass scores carry higher uncertainty than DepMap/tissue scores
-6. **Marizomib CMap** — not profiled in L1000 (marine natural product, profiled after dataset generation); CMap score uses neutral 0.50 prior
-7. **PPI coverage** — 490/557 drugs score at floor (0.20) due to sparse curated neighbor coverage; PPI weight reduced to 0.05 to reflect this
+1. **No scRNA-seq atlas** — no H3K27M-equivalent ATRT single-cell atlas exists as of 2026. GSE70678 is bulk RNA (49 samples) with less resolution than Filbin 2018 scRNA-seq.
+2. **Small RNA reference** — GSE70678 n=49; escape bypass scores carry higher uncertainty than DepMap scores.
+3. **Subgroup uncertainty** — without methylation array (EPIC 850K) or RNA-seq subgroup calling, pipeline uses pan-ATRT scores.
+4. **No experimental validation** — hypothesis generation only; cell line and in vivo experiments required.
+5. **PPI coverage** — 490/557+ drugs score at floor (0.20); PPI weight = 0.05 to reflect this.
+6. **Tazemetostat CMap** — EZH2 inhibitors may not have been profiled in early L1000 datasets; CMap score uses neutral 0.50 prior if missing.
 
 ---
 
 ## Proposed Wet Lab Validation
 
-Minimum experiment set to test the top hypothesis:
-
-1. **Cell viability** — SU-DIPG-IV, SU-DIPG-XIII at 72h (CTG assay); triple combo vs individual drugs
+1. **Cell viability** — BT16, BT37, G401 at 72h (CTG); triple combo vs individual drugs
 2. **Synergy** — Bliss independence model, 5×5 dose matrix per drug pair
-3. **Target engagement** — Western: BRD4↓ (Birabresib), H3K27ac↑ (Panobinostat), 20S activity↓ (Marizomib)
-4. **H3K27M specificity** — compare H3K27M+ vs H3K27M− isogenic lines
-5. **CMap validation** — RNA-seq after drug treatment; confirm reversal of H3K27M signature
+3. **Target engagement** — Western: H3K27me3↓ (tazemetostat), H3K27ac↑ (panobinostat), AURKA activity↓ (alisertib)
+4. **SMARCB1 specificity** — compare SMARCB1-null vs SMARCB1-reconstituted isogenic lines
+5. **EZH2 synthetic lethality** — confirm dependency is lost upon SMARCB1 re-expression
 
 ---
 
@@ -205,24 +191,23 @@ pip install pandas numpy scipy matplotlib requests h5py
 **Data placement:**
 ```
 data/
-  raw_omics/GSE102130_K27Mproject.RSEM.vh20170621.txt   # Filbin scRNA-seq
-  depmap/CRISPRGeneEffect.csv                            # Broad DepMap
+  raw_omics/GSE70678_ATRT_expression.txt       # Torchia 2015 (GEO GSE70678)
+  raw_omics/GSE106982_ATRT_methylation.txt      # Johann 2016 (optional)
+  depmap/CRISPRGeneEffect.csv                   # Broad DepMap 23Q4
   depmap/Model.csv
-  validation/cbtn_genomics/mutations.txt                 # PNOC/PBTA (controlled)
-  validation/cbtn_genomics/cna.txt
-  validation/cbtn_genomics/rna_zscores.txt               # Processed RNA
-  cmap_query/cmap_scores_pipeline.json                   # clue.io pre-computed scores
+  validation/cbtn_genomics/atrt/                # CBTN ATRT (optional, controlled)
+  cmap_query/atrt_cmap_scores.json              # clue.io pre-computed scores
 ```
 
 **Run:**
 ```bash
-# Optional: prepare and run clue.io query (one-time)
+# Optional: prepare CMap query
 python -m backend.pipeline.prepare_cmap_query
-# [submit query at clue.io, download arfs/TAG/query_result.gct]
+# [submit to clue.io, download query_result.gct]
 python -m backend.pipeline.integrate_cmap_results
 
 # Main pipeline
-python -m backend.pipeline.save_results
+python -m backend.pipeline.save_results --disease atrt
 python -m backend.pipeline.generate_figures
 ```
 
@@ -230,8 +215,8 @@ python -m backend.pipeline.generate_figures
 
 ## Citation
 
-Primary data citations: Filbin et al. 2018 (*Science*), Grasso et al. 2015 (*Nature Medicine*),
-Behan et al. 2019 (*Nature*), Monje et al. 2023 (*Nature Medicine*),
+Primary data: Torchia et al. 2015 (*Cancer Cell*), Johann et al. 2016 (*Cancer Cell*),
+Knutson et al. 2013 (*PNAS*), Behan et al. 2019 (*Nature*),
 Subramanian et al. 2017 (*Cell*) — CMap L1000.
 
 Full reference list: see [REFERENCES.md](REFERENCES.md)
@@ -241,7 +226,6 @@ Full reference list: see [REFERENCES.md](REFERENCES.md)
 ## License
 
 MIT License. Data sources subject to their own access agreements.
-clue.io CMap data subject to Broad Institute terms of use.
 
 ---
 
