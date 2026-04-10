@@ -1,16 +1,29 @@
+"""
+save_results.py
+===============
+ATRT Drug Repurposing Pipeline — Save Results to JSON
+
+Run:
+  python -m backend.pipeline.save_results --disease atrt --top_n 20
+
+Outputs:
+  results/atrt_pipeline_results.json   ← main results
+  results/atrt_pipeline_output.txt     ← run log
+"""
 
 import asyncio
 import json
 import logging
-try:
-    from .pipeline_config import BBB as BBB_CONFIG
-except ImportError:
-    from pipeline_config import BBB as BBB_CONFIG
 import argparse
 import math
 import sys
 from datetime import datetime
 from pathlib import Path
+
+try:
+    from .pipeline_config import BBB as BBB_CONFIG, COMPOSITE_WEIGHTS
+except ImportError:
+    from pipeline_config import BBB as BBB_CONFIG, COMPOSITE_WEIGHTS
 
 
 def setup_logging(log_path: Path) -> None:
@@ -19,7 +32,9 @@ def setup_logging(log_path: Path) -> None:
         logging.StreamHandler(sys.stdout),
         logging.FileHandler(log_path, mode="w"),
     ]
-    logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=handlers)
+    logging.basicConfig(
+        level=logging.INFO, format="%(message)s", handlers=handlers
+    )
 
 
 def _safe(obj):
@@ -31,7 +46,7 @@ def _safe(obj):
 
 
 def _normalise_candidate(c: dict) -> dict:
-    dipg = c.get("dipg_components", {}) or {}
+    """Normalise candidate dict to consistent output schema."""
     return {
         "name":                    c.get("name") or c.get("drug_name") or "?",
         "targets":                 list(c.get("targets") or []),
@@ -40,16 +55,26 @@ def _normalise_candidate(c: dict) -> dict:
         "depmap_score":            round(float(c.get("depmap_score", 0)), 4),
         "ppi_score":               round(float(c.get("ppi_score", 0)), 4),
         "escape_bypass_score":     round(float(c.get("escape_bypass_score", 0)), 4),
-        "poly_score":              round(float(c.get("poly_score", 0)), 4),
         "bbb_penetrance":          c.get("bbb_penetrance", "UNKNOWN"),
         "bbb_score":               round(float(c.get("bbb_score", 0)), 4),
         "clinical_failure":        bool(c.get("clinical_failure", False)),
-        "bbb_penalty_applied":     bool(c.get("bbb_penalty_applied", False)),
-        "h3k27m_relevant":         bool(dipg.get("h3k27m_relevant", False)),
-        "is_untested_dipg":        bool(dipg.get("is_untested_dipg", False)),
-        "dipg_score_bonus":        round(float(dipg.get("dipg_score_bonus", 0)), 4),
+        # ATRT-specific fields
+        "ezh2_boosted":            bool(c.get("ezh2_boosted", False)),
+        "aurka_boosted":           bool(c.get("aurka_boosted", False)),
+        "atrt_boosts_applied":     c.get("atrt_boosts_applied", []),
+        # IC50 validation
+        "ic50_validated":          bool(c.get("ic50_validated", False)),
+        "ic50_um":                 c.get("ic50_um"),
+        "ic50_cell_line":          c.get("ic50_cell_line"),
+        "ic50_source":             c.get("ic50_source"),
+        "ic50_has_smarcb1_data":   bool(c.get("ic50_has_smarcb1_data", False)),
+        # CMap
+        "cmap_score":              c.get("cmap_score"),
+        "is_reverser":             c.get("is_reverser"),
+        # Scoring notes
         "depmap_note":             c.get("depmap_note", ""),
         "sc_context":              c.get("sc_context", ""),
+        "escape_note":             c.get("escape_note", ""),
         "mechanism":               c.get("mechanism") or c.get("drug_class", ""),
     }
 
@@ -62,138 +87,91 @@ def _extract_confidence_breakdown(hypotheses: list) -> dict | None:
     return {
         "drug_combo":               h.get("drug_or_combo", ""),
         "confidence":               round(float(h.get("confidence", 0)), 4),
+        "confidence_optimistic":    round(float(h.get("confidence_optimistic", 0)), 4),
+        "confidence_range":         h.get("confidence_range", ""),
         "priority":                 h.get("priority", ""),
         "statistical_significance": h.get("statistical_significance", ""),
         "depmap_essentiality":      round(float(cb.get("depmap_essentiality", 0)), 4),
         "bbb_penetrance":           round(float(cb.get("bbb_penetrance", 0)), 4),
         "mechanistic_diversity":    round(float(cb.get("mechanistic_diversity", 0)), 4),
-        "rationale":                h.get("rationale", ""),
+        "toxicity_flag":            cb.get("toxicity_flag", ""),
+        "toxicity_note":            cb.get("toxicity_note", ""),
+        "ezh2_boosted_in_combo":    cb.get("ezh2_inhibitors_in_combo", []),
     }
 
 
-async def main(disease: str, top_n: int, output_path: Path) -> None:
-    setup_logging(output_path.parent / "pipeline_output.txt")
+async def main(
+    disease: str,
+    top_n: int,
+    output_path: Path,
+    subgroup: str | None = None,
+    location: str = "unknown_location",
+) -> None:
+    setup_logging(output_path.parent / "atrt_pipeline_output.txt")
     logger = logging.getLogger(__name__)
 
     logger.info("=" * 65)
-    logger.info("GBM/DIPG Drug Repurposing Pipeline — save_results.py")
-    logger.info(f"  disease  : {disease}")
-    logger.info(f"  top_n    : {top_n}")
-    logger.info(f"  timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("ATRT Drug Repurposing Pipeline — save_results.py")
+    logger.info(f"  disease   : {disease}")
+    logger.info(f"  top_n     : {top_n}")
+    logger.info(f"  subgroup  : {subgroup or 'pan-ATRT'}")
+    logger.info(f"  location  : {location}")
+    logger.info(f"  timestamp : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 65)
 
     from backend.pipeline.discovery_pipeline import ProductionPipeline
 
     pipeline = ProductionPipeline()
     await pipeline.initialize(disease=disease)
-    raw = await pipeline.run(disease_name=disease, top_k=top_n)
+    raw = await pipeline.run(
+        disease_name=disease,
+        top_k=top_n,
+        subgroup=subgroup,
+        location=location,
+    )
 
     hypotheses = raw.get("hypotheses", [])
     stats      = raw.get("stats", {})
-
-    logger.info(f"\n── pipeline.run() returned keys: {list(raw.keys())}")
-
     candidates = raw.get("top_candidates", [])
-    if candidates:
-        logger.info(f"── found {len(candidates)} candidates in top_candidates")
 
-    if not candidates:
-        logger.info("── reconstructing candidates by parsing hypothesis text fields")
-        import re as _re
-        for h in hypotheses:
-            combo     = h.get("drug_or_combo", "")
-            cb        = h.get("confidence_breakdown", {})
-            expl      = h.get("confidence_explanation", "")
-            drugs     = [d.strip() for d in combo.split(" + ") if d.strip()]
-            dm_match  = _re.search(r"Chronos scores:\s*\[([\d.,\s]+)\]", expl)
-            dm_scores = []
-            if dm_match:
-                dm_scores = [float(x.strip()) for x in dm_match.group(1).split(",") if x.strip()]
-            bbb_match = _re.findall(r"\('([^']+)',\s*'([^']+)'\)", expl)
-            bbb_map   = {name.upper(): pen for name, pen in bbb_match}
-            for i, drug_name in enumerate(drugs):
-                dm  = dm_scores[i] if i < len(dm_scores) else cb.get("depmap_essentiality", 0)
-                bbb = bbb_map.get(drug_name.upper(), "UNKNOWN")
-                candidates.append({
-                    "name":                    drug_name,
-                    "score":                   round(h.get("confidence", 0), 4),
-                    "depmap_score":            round(dm, 4),
-                    "tissue_expression_score": 0.0,
-                    "ppi_score":               0.0,
-                    "escape_bypass_score":     0.0,
-                    "bbb_penetrance":          bbb,
-                    "bbb_score":               BBB_CONFIG["penetrance_scores"].get(bbb, BBB_CONFIG["unknown_score"]),
-                    "clinical_failure":        False,
-                    "targets":                 [],
-                    "mechanism":               h.get("mechanism_narrative", ""),
-                })
-
-    logger.info(f"── total candidates for figures: {len(candidates)}")
-
-    combos = raw.get("top_combinations", [])
-
-    # ── FIX v5.3: real screened count ─────────────────────────────────────────
-    # stats["n_screened"] is written by discovery_pipeline.py as
-    # len(sorted_candidates) BEFORE the [:top_k] slice — the full OpenTargets
-    # drug count. Falls back gracefully if running an older pipeline version.
     n_screened = (
-        stats.get("n_screened")           # set by fixed discovery_pipeline.py  ← primary
-        or stats.get("n_drugs_screened")  # legacy field name
-        or len(candidates)                # last-resort fallback
+        stats.get("n_screened")
+        or stats.get("n_drugs_screened")
+        or len(candidates)
     )
 
-    # Validated contingency table — PNOC/PBTA cohort, n=184, p=7.55e-05
-    contingency = {
-        "h3k27m_pos_cdkn2a_del": 14,
-        "h3k27m_pos_cdkn2a_wt":  81,
-        "h3k27m_neg_cdkn2a_del": 36,
-        "h3k27m_neg_cdkn2a_wt":  53,
-        "h3k27m_count":          95,
-        "cdkn2a_del_count":      50,
-        "total":                 184,
-        "p_value":               stats.get("p_value"),
-        "p_value_label":         stats.get("p_value_label", ""),
-    }
-
     results = {
-        "run_timestamp": datetime.now().isoformat(),
+        "run_timestamp":  datetime.now().isoformat(),
         "disease":        disease,
+        "subgroup":       subgroup or "pan-ATRT",
+        "location":       location,
+        "pipeline_version": "ATRT v1.0",
 
         "stats": {
-            "p_value":              stats.get("p_value"),
-            "p_value_label":        stats.get("p_value_label", ""),
-            "n_drugs_screened":     n_screened,   # FIX: real count, not top_n
-            "n_dipg_samples":       stats.get("total_samples", 0),
-            "dipg_specialised":     True,
-            "novel_count":          0,
-            "combinations_found":   len(combos),
-            "cmap_active":          False,
-            "synergy_validated":    False,
+            "smarcb1_loss_count":       stats.get("smarcb1_loss_count", 0),
+            "smarca4_loss_count":       stats.get("smarca4_loss_count", 0),
+            "total_atrt_samples":       stats.get("total_samples", 0),
+            "rna_upregulated_genes":    stats.get("rna_upregulated_genes", 0),
+            "p_value_label":            stats.get("p_value_label", "N/A"),
+            "statistical_note":         stats.get("statistical_note", ""),
+            "n_drugs_screened":         n_screened,
+            "n_ezh2_boosted":           stats.get("n_ezh2_boosted", 0),
+            "n_aurka_boosted":          stats.get("n_aurka_boosted", 0),
+            "escape_bypass_mode":       stats.get("escape_bypass_mode", "curated fallback"),
+            "composite_weights":        COMPOSITE_WEIGHTS,
+            "calling_method":           stats.get("calling_method", "none"),
             "data_streams_active": [
-                "DepMap CRISPR (Broad Institute)",
-                "Single-cell RNA-seq (GSE102130, Filbin 2018, H3K27M DIPG)",
-                "OpenTargets API",
-                "STRING-DB PPI",
-                "PedcBioPortal genomic validation (PNOC/PBTA, n=184)",
-            ],
-            "data_streams_pending": [
-                "CMAP LINCS L1000 transcriptomic reversal (~30GB download required)",
-                "Experimental Chou-Talalay synergy CI data (wet lab required)",
+                "DepMap CRISPR (Broad Institute — ATRT/rhabdoid lines: BT16, BT37, G401, A204)",
+                "GSE70678 bulk RNA-seq (Torchia 2015 — 49 ATRT tumours)",
+                "OpenTargets API (CNS/Oncology drugs)",
+                "STRING-DB PPI network",
+                "ATRT published IC50 validation (BT16/BT37/G401/A204)",
             ],
         },
 
-        "contingency_table":    contingency,
-        "top_candidates":       [_normalise_candidate(c) for c in candidates[:top_n]],
+        "top_candidates": [_normalise_candidate(c) for c in candidates[:top_n]],
 
-        "top_combinations": [
-            {
-                "compound_a":    c.get("compound_a", ""),
-                "compound_b":    c.get("compound_b", ""),
-                "synergy_score": round(float(c.get("synergy_score", 0)), 4),
-                "rationale":     c.get("rationale", ""),
-            }
-            for c in combos[:10]
-        ],
+        "top_combinations": [],   # populated if synergy predictor runs
 
         "confidence_breakdown": _extract_confidence_breakdown(hypotheses),
         "hypotheses":           hypotheses,
@@ -201,8 +179,10 @@ async def main(disease: str, top_n: int, output_path: Path) -> None:
         "reports": {
             "novelty":          raw.get("novelty_report", ""),
             "polypharmacology": raw.get("poly_report", ""),
-            "combinations":     raw.get("combination_report", ""),
         },
+
+        # ATRT-specific summary table (mirrors README format)
+        "atrt_summary": _build_summary_table(candidates[:8]),
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -210,32 +190,59 @@ async def main(disease: str, top_n: int, output_path: Path) -> None:
         json.dump(results, f, indent=2, default=_safe)
 
     logger.info(f"\n✅ Results saved to : {output_path}")
-    logger.info(f"✅ Log saved to     : {output_path.parent / 'pipeline_output.txt'}")
     logger.info(f"✅ n_drugs_screened : {n_screened}")
-    logger.info("\nNext step: python -m backend.pipeline.generate_figures")
+    logger.info(f"\nNext step: python -m backend.pipeline.generate_figures")
 
-    ct = results["contingency_table"]
-    if ct:
-        logger.info(f"\n── Contingency table ──────────────────────────────")
-        logger.info(f"  H3K27M+/CDKN2A-del : {ct['h3k27m_pos_cdkn2a_del']}")
-        logger.info(f"  H3K27M+/CDKN2A-WT  : {ct['h3k27m_pos_cdkn2a_wt']}")
-        logger.info(f"  H3K27M-/CDKN2A-del : {ct['h3k27m_neg_cdkn2a_del']}")
-        logger.info(f"  H3K27M-/CDKN2A-WT  : {ct['h3k27m_neg_cdkn2a_wt']}")
-        logger.info(f"  p-value            : {ct.get('p_value_label') or ct.get('p_value')}")
+    # Summary table
+    logger.info(f"\n── SMARCB1 Statistics ──────────────────────────────")
+    logger.info(f"  SMARCB1 loss     : {stats.get('smarcb1_loss_count', 0)}/{stats.get('total_samples', 0)} samples")
+    logger.info(f"  SMARCA4 loss     : {stats.get('smarca4_loss_count', 0)} samples")
+    logger.info(f"  Statistical note : {stats.get('p_value_label', 'N/A')}")
 
-    top5 = results["top_candidates"][:5]
-    if top5:
-        logger.info(f"\n── Top 5 candidates ────────────────────────────────")
-        logger.info(f"  {'Drug':<25} {'Score':>6}  {'BBB':<10}")
-        for c in top5:
-            logger.info(f"  {c['name']:<25} {c['score']:>6.3f}  {c['bbb_penetrance']:<10}")
-        logger.info(f"\n  Total drugs screened (OpenTargets): {n_screened}")
+    logger.info(f"\n── Top 8 Candidates ──────────────────────────────────")
+    logger.info(f"  {'Drug':<26} {'Score':>6}  {'BBB':<10}  {'EZH2↑':>6}  {'AURKA↑':>7}  IC50 (µM)")
+    for c in candidates[:8]:
+        ic50_str = f"{c.get('ic50_um', 'N/A')} ({c.get('ic50_cell_line', '')})" if c.get("ic50_validated") else "—"
+        logger.info(
+            f"  {c.get('name',''):<26} {c.get('score',0):>6.3f}  "
+            f"{c.get('bbb_penetrance','?'):<10}  "
+            f"{'YES' if c.get('ezh2_boosted') else '—':>6}  "
+            f"{'YES' if c.get('aurka_boosted') else '—':>7}  "
+            f"{ic50_str}"
+        )
+    logger.info(f"\n  Total drugs screened (OpenTargets): {n_screened}")
+
+
+def _build_summary_table(candidates: list) -> list:
+    """Build summary table for README/report output."""
+    rows = []
+    for i, c in enumerate(candidates, 1):
+        rows.append({
+            "rank":       i,
+            "drug":       c.get("name", "?"),
+            "score":      round(float(c.get("score", 0)), 3),
+            "bbb":        c.get("bbb_penetrance", "?"),
+            "depmap":     round(float(c.get("depmap_score", 0)), 3),
+            "tissue":     round(float(c.get("tissue_expression_score", 0)), 3),
+            "cmap_norm_cs": c.get("cmap_score"),
+            "ic50_um":    c.get("ic50_um"),
+            "ic50_cell_line": c.get("ic50_cell_line"),
+            "ezh2_boosted":  c.get("ezh2_boosted", False),
+            "aurka_boosted": c.get("aurka_boosted", False),
+        })
+    return rows
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Save pipeline results to JSON")
-    parser.add_argument("--disease", default="dipg")
-    parser.add_argument("--top_n",   default=20, type=int)
-    parser.add_argument("--output",  default="results/pipeline_results.json")
+    parser = argparse.ArgumentParser(description="ATRT Pipeline — Save Results")
+    parser.add_argument("--disease",  default="atrt")
+    parser.add_argument("--top_n",    default=20, type=int)
+    parser.add_argument("--output",   default="results/atrt_pipeline_results.json")
+    parser.add_argument("--subgroup", default=None, choices=["TYR", "SHH", "MYC"])
+    parser.add_argument("--location", default="unknown_location",
+                        choices=["infratentorial", "supratentorial", "unknown_location"])
     args = parser.parse_args()
-    asyncio.run(main(args.disease, args.top_n, Path(args.output)))
+    asyncio.run(main(
+        args.disease, args.top_n, Path(args.output),
+        subgroup=args.subgroup, location=args.location,
+    ))
