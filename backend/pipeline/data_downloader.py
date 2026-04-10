@@ -1,58 +1,39 @@
 """
-data_downloader.py
-==================
-Automated data download helpers for the ATRT Drug Repurposing Pipeline.
+data_downloader.py  (v2.0)
+==========================
+Automated data acquisition for the ATRT Drug Repurposing Pipeline.
 
-Run this script FIRST before executing save_results.py.
+KEY CHANGES FROM v1.0
+----------------------
+1. GPL6244 probe annotation download (required to map probe IDs → gene symbols)
+2. GTEx v8 normal brain download (required for differential expression baseline)
+3. Cleaner status reporting with per-file size and data-readiness check
 
-Usage:
-    python -m backend.pipeline.data_downloader --all
-    python -m backend.pipeline.data_downloader --dataset gse70678
-    python -m backend.pipeline.data_downloader --dataset depmap
-    python -m backend.pipeline.data_downloader --check   # just verify what's present
+RUN ORDER
+----------
+Step 1 (required)  : --dataset depmap         → manual (portal auth needed)
+Step 2 (required)  : --dataset gpl6244         → auto download (~5 MB)
+Step 3 (required)  : --dataset gse70678        → auto download (~50 MB)
+Step 4 (required)  : --dataset gtex_brain      → auto download (~300 MB)
+Step 5 (optional)  : --dataset gse106982       → auto download (~30 MB)
+Step 6 (optional)  : cbtn ATRT                 → manual (DCC access needed)
 
-DATA SOURCES AND PROVENANCE
+WHY GTEx FOR NORMAL BRAIN?
 ----------------------------
-All datasets are open-access (no login required except CBTN).
+GSE70678 only contains 49 ATRT tumour samples — no matched normal brain controls.
+The original Torchia 2015 paper compared against normal brain from a separate
+GEO submission. GTEx v8 provides the highest-quality human brain expression
+reference (n=209 cerebellum, n=255 cortex donors) and is the current community
+standard for normal tissue expression.
 
-1. GSE70678 — Torchia 2015 ATRT RNA-seq cohort
-   Reference: Torchia J et al. Cancer Cell 2015; 30(6):891-908. PMID 26609405.
-   URL: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE70678
-   Content: 49 ATRT tumors + normal brain samples; subgroup annotations (TYR/SHH/MYC)
-   Platform: Affymetrix HuGene 1.0 ST (GPL6244)
-   Size: ~50 MB compressed
-   License: GEO open access
+GTEx data is at gene level (TPM) — compatible with our probe-mapped ATRT data
+after log2(TPM + 1) transformation.
 
-2. DepMap 24Q4 — Broad Institute CRISPR Chronos scores
-   Reference: Behan FM et al. Nature 2019; 568:511. PMID 30971826.
-   URL: https://depmap.org/portal/download/all/
-   Files: CRISPRGeneEffect.csv (~500 MB), Model.csv (~5 MB)
-   Release: 24Q4 (October 2024) — latest as of April 2026
-   License: CC BY 4.0
-   ATRT/rhabdoid lines included: BT16, BT37, G401, A204 (verify in Model.csv)
-
-3. clue.io CMap L1000 — Transcriptomic reversal scores
-   Reference: Subramanian A et al. Cell 2017; 171(6):1437. PMID 29195078.
-   URL: https://clue.io (free academic account)
-   Process: Run prepare_cmap_query.py → submit gene lists → download GCT → integrate
-   Steps documented in prepare_cmap_query.py
-
-4. OpenTargets API — Drug-target associations (already integrated, no download)
-   Reference: Ochoa D et al. Nucleic Acids Res 2021; 49(D1):D1302. PMID 33290552.
-   URL: https://api.platform.opentargets.org/api/v4/graphql (live API)
-
-5. CBTN ATRT cohort (OPTIONAL — controlled access)
-   URL: https://portal.kidsfirstdrc.org
-   Study: PBTA ATRT samples (~30-40 samples)
-   Access: Requires DCC agreement (same as PNOC/PBTA)
-   Files: cna.txt, rna_zscores.txt → place in data/validation/cbtn_genomics/atrt/
-   If absent: pipeline uses GSE70678 fallback (fully functional)
+Reference: GTEx Consortium (2020) Science 369(6509). PMID 32913098.
 """
 
 import argparse
 import gzip
-import io
-import json
 import logging
 import os
 import shutil
@@ -68,289 +49,536 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Dataset definitions
+# Dataset catalogue
 # ─────────────────────────────────────────────────────────────────────────────
 
-DATASETS = {
-    "gse70678": {
-        "name":        "GSE70678 — Torchia 2015 ATRT RNA-seq",
-        "url":         "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE70nnn/GSE70678/matrix/GSE70678_series_matrix.txt.gz",
-        "output_path": "data/raw_omics/GSE70678_ATRT_expression.txt",
-        "compressed":  True,
-        "size_mb":     50,
-        "pmid":        "26609405",
-        "license":     "GEO open access",
-        "instructions": (
-            "After download, the file will be decompressed automatically.\n"
-            "The series matrix contains expression data for 49 ATRT + normal samples.\n"
-            "Pipeline reads this file directly — no additional processing needed."
+DATASETS: Dict[str, Dict] = {
+
+    # ── GPL6244 probe annotation ──────────────────────────────────────────────
+    "gpl6244": {
+        "name":        "GPL6244 — Affymetrix HuGene 1.0 ST probe annotation",
+        "url":         (
+            "https://ftp.ncbi.nlm.nih.gov/geo/platforms/"
+            "GPL6nnn/GPL6244/annot/GPL6244.annot.gz"
+        ),
+        "output_path": "data/raw_omics/GPL6244.annot.gz",
+        "processed":   "data/raw_omics/GPL6244_probe_map.tsv",
+        "compressed":  False,   # Keep .gz; ProbeMapper handles decompression
+        "size_mb":     5,
+        "required":    True,
+        "pmid":        None,
+        "note": (
+            "Annotation file mapping Affymetrix probe IDs (e.g., '200099_s_at') "
+            "to HGNC gene symbols. Required to convert GSE70678 from probe IDs "
+            "to gene symbols. The ProbeMapper class will parse this automatically."
         ),
     },
+
+    # ── GSE70678 ATRT bulk RNA-seq ────────────────────────────────────────────
+    "gse70678": {
+        "name":        "GSE70678 — Torchia 2015 ATRT bulk RNA-seq (49 tumour samples)",
+        "url":         (
+            "https://ftp.ncbi.nlm.nih.gov/geo/series/"
+            "GSE70nnn/GSE70678/matrix/GSE70678_series_matrix.txt.gz"
+        ),
+        "output_path": "data/raw_omics/GSE70678_series_matrix.txt.gz",
+        "processed":   "data/raw_omics/GSE70678_gene_expression.tsv",
+        "compressed":  False,   # Keep as .gz; tissue_expression.py handles it
+        "size_mb":     50,
+        "required":    True,
+        "pmid":        "26609405",
+        "note": (
+            "Contains Affymetrix probe IDs — must be processed by probe_mapper.py "
+            "(ProbeMapper class) before use. Run process_gse70678() after download."
+        ),
+    },
+
+    # ── GTEx v8 brain normal reference ────────────────────────────────────────
+    "gtex_brain": {
+        "name":        "GTEx v8 — Gene median TPM (all tissues, ~300 MB)",
+        "url":         (
+            "https://storage.googleapis.com/gtex_analysis_v8/rna_seq_data/"
+            "GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz"
+        ),
+        "output_path": "data/raw_omics/GTEx_v8_gene_median_tpm.gct.gz",
+        "processed":   "data/raw_omics/GTEx_brain_normal_reference.tsv",
+        "compressed":  False,
+        "size_mb":     300,
+        "required":    True,
+        "pmid":        "32913098",
+        "note": (
+            "GTEx v8 median TPM per gene per tissue. "
+            "After download run process_gtex() to extract brain tissues and "
+            "save a compact reference file (only Brain - Cerebellum + Brain - Cortex). "
+            "Full file is 300 MB but the processed output is <5 MB."
+        ),
+    },
+
+    # ── GSE106982 methylation subgroups (optional) ────────────────────────────
     "gse106982": {
         "name":        "GSE106982 — Johann 2016 ATRT methylation subgroups (optional)",
-        "url":         "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE106nnn/GSE106982/matrix/GSE106982_series_matrix.txt.gz",
-        "output_path": "data/raw_omics/GSE106982_ATRT_methylation.txt",
-        "compressed":  True,
-        "size_mb":     30,
-        "pmid":        "26923874",
-        "license":     "GEO open access",
-        "optional":    True,
-        "instructions": (
-            "Optional: provides methylation-based subgroup labels (TYR/SHH/MYC) for 150 ATRT.\n"
-            "Pipeline uses prevalence priors from Johann 2016 if this file is absent."
+        "url":         (
+            "https://ftp.ncbi.nlm.nih.gov/geo/series/"
+            "GSE106nnn/GSE106982/matrix/GSE106982_series_matrix.txt.gz"
         ),
+        "output_path": "data/raw_omics/GSE106982_series_matrix.txt.gz",
+        "processed":   None,
+        "compressed":  False,
+        "size_mb":     30,
+        "required":    False,
+        "pmid":        "26923874",
+        "note":        "Methylation-based subgroup labels for 150 ATRT. Optional.",
     },
 }
 
-# DepMap must be downloaded manually due to portal authentication
-DEPMAP_MANUAL_INSTRUCTIONS = """
-═══════════════════════════════════════════════════════════════
-DepMap 24Q4 — Manual Download Required
-═══════════════════════════════════════════════════════════════
-DepMap requires a free account to download data files.
-
-Steps:
-1. Go to: https://depmap.org/portal/download/all/
-2. Select release: "24Q4" (October 2024 — latest as of April 2026)
-3. Download these two files:
-   - CRISPRGeneEffect.csv  (~500 MB)
-   - Model.csv             (~5 MB)
-4. Place both files in: data/depmap/
-
-mkdir -p data/depmap
-# Then move downloaded files:
-mv ~/Downloads/CRISPRGeneEffect.csv data/depmap/
-mv ~/Downloads/Model.csv data/depmap/
-
-Reference: Behan FM et al. Nature 2019; 568:511. PMID 30971826.
-License: CC BY 4.0
-
-ATRT/rhabdoid cell lines to look for in Model.csv:
-  BT16  (ACH-000725) — CNS ATRT, ATRT-MYC, SMARCB1-null
-  BT37  (ACH-000881) — CNS ATRT, ATRT-TYR, SMARCB1-null
-  G401  (ACH-000039) — Renal rhabdoid, SMARCB1-null (Knutson 2013 validation line)
-  A204  (ACH-000658) — Rhabdoid, SMARCB1-null
-  BT12  (ACH-001082) — CNS ATRT, SMARCB1-null (verify ID in your Model.csv)
-═══════════════════════════════════════════════════════════════
-"""
-
-CMAP_MANUAL_INSTRUCTIONS = """
-═══════════════════════════════════════════════════════════════
-clue.io CMap L1000 — Semi-automated (requires free account)
-═══════════════════════════════════════════════════════════════
-Steps:
-1. First prepare the ATRT gene signature:
-   python -m backend.pipeline.prepare_cmap_query
-
-2. This creates:
-   data/cmap_query/atrt_up_genes.txt   (top upregulated genes)
-   data/cmap_query/atrt_down_genes.txt (top downregulated genes)
-
-3. Go to: https://clue.io → create free academic account
-4. Click "Query" → "L1000 Query"
-5. Paste contents of atrt_up_genes.txt into UP box
-6. Paste contents of atrt_down_genes.txt into DOWN box
-7. Name the query: "ATRT_SMARCB1_signature"
-8. Submit → results ready in ~10 minutes
-
-9. Download results GCT file → save as:
-   data/cmap_query/query_result.gct
-
-10. Integrate results:
-    python -m backend.pipeline.integrate_cmap_results
-
-Reference: Subramanian A et al. Cell 2017; 171(6):1437. PMID 29195078.
-License: clue.io free academic
-
-Note: If GSE70678 is not yet downloaded, prepare_cmap_query.py will
-use curated ATRT signature genes from literature as a starting point.
-═══════════════════════════════════════════════════════════════
-"""
-
-CBTN_MANUAL_INSTRUCTIONS = """
-═══════════════════════════════════════════════════════════════
-CBTN ATRT Cohort — Controlled Access (Optional)
-═══════════════════════════════════════════════════════════════
-This is OPTIONAL — pipeline works fully with GSE70678 fallback.
-
-If you want patient-level ATRT genomics:
-1. Go to: https://portal.kidsfirstdrc.org
-2. Register and apply for data access (DCC agreement)
-3. Search for PBTA ATRT samples (~30-40 samples)
-4. Download: cna.txt, rna_zscores.txt, mutations.txt
-5. Place files in: data/validation/cbtn_genomics/atrt/
-
-mkdir -p data/validation/cbtn_genomics/atrt/
-
-Reference: Rokita JL et al. Nat Cancer 2021. PMID 33842919.
-═══════════════════════════════════════════════════════════════
-"""
-
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Download functions
+# Generic download helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _progress_hook(count: int, block_size: int, total_size: int) -> None:
-    """Simple download progress indicator."""
     if total_size > 0:
         pct = min(int(count * block_size * 100 / total_size), 100)
-        print(f"\r  Progress: {pct}%", end="", flush=True)
+        print(f"\r  Downloading: {pct:3d}%", end="", flush=True)
 
 
 def download_file(
     url: str,
     output_path: str,
-    compressed: bool = False,
+    decompress_to: Optional[str] = None,
     max_retries: int = 3,
+    timeout: int = 120,
 ) -> bool:
-    """Download a file from URL to output_path."""
+    """
+    Download a file from URL with retry logic.
+
+    Parameters
+    ----------
+    url          : Remote URL
+    output_path  : Local destination path (may be .gz)
+    decompress_to: If set, decompress .gz to this path after downloading.
+                   Set to None to keep the compressed file.
+    """
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(out.suffix + ".tmp")
 
     for attempt in range(1, max_retries + 1):
         try:
-            logger.info("Downloading %s (attempt %d/%d)...", url, attempt, max_retries)
-            tmp_path = out.with_suffix(out.suffix + ".tmp")
+            logger.info("  Attempt %d/%d — %s", attempt, max_retries, url)
+            urllib.request.urlretrieve(url, tmp, reporthook=_progress_hook)
+            print()  # newline after progress bar
+            tmp.rename(out)
 
-            urllib.request.urlretrieve(url, tmp_path, reporthook=_progress_hook)
-            print()  # newline after progress
+            if decompress_to:
+                _decompress(out, Path(decompress_to))
 
-            if compressed and url.endswith(".gz"):
-                logger.info("Decompressing...")
-                with gzip.open(tmp_path, "rb") as f_in:
-                    with open(out, "wb") as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-                tmp_path.unlink()
-            else:
-                tmp_path.rename(out)
-
-            size_mb = out.stat().st_size / (1024 * 1024)
-            logger.info("✅ Downloaded: %s (%.1f MB)", out, size_mb)
+            size_mb = out.stat().st_size / 1_048_576
+            logger.info("  ✅ %s (%.1f MB)", out, size_mb)
             return True
 
-        except Exception as e:
-            logger.warning("Attempt %d failed: %s", attempt, e)
+        except Exception as exc:
+            logger.warning("  Attempt %d failed: %s", attempt, exc)
+            if tmp.exists():
+                tmp.unlink()
             if attempt < max_retries:
                 time.sleep(5 * attempt)
 
-    logger.error("❌ All %d download attempts failed for %s", max_retries, url)
+    logger.error("  ❌ All %d attempts failed for %s", max_retries, url)
     return False
 
 
+def _decompress(gz_path: Path, out_path: Path) -> None:
+    """Decompress a .gz file to out_path."""
+    logger.info("  Decompressing → %s", out_path)
+    with gzip.open(gz_path, "rb") as f_in, open(out_path, "wb") as f_out:
+        shutil.copyfileobj(f_in, f_out)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Post-processing helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def process_gse70678() -> bool:
+    """
+    Convert GSE70678 from probe IDs to gene symbols and save as TSV.
+
+    Requires:
+      data/raw_omics/GSE70678_series_matrix.txt.gz   (downloaded above)
+      data/raw_omics/GPL6244.annot.gz                (downloaded above)
+
+    Produces:
+      data/raw_omics/GSE70678_gene_expression.tsv
+        Rows  = HGNC gene symbols
+        Cols  = sample GSM IDs (49 ATRT samples)
+        Values = log2-scale Affymetrix expression (probe-median aggregated)
+    """
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        from probe_mapper import ProbeMapper, parse_geo_series_matrix
+
+        series_path = Path("data/raw_omics/GSE70678_series_matrix.txt.gz")
+        out_path    = Path("data/raw_omics/GSE70678_gene_expression.tsv")
+
+        if not series_path.exists():
+            logger.error(
+                "GSE70678 series matrix not found at %s. "
+                "Run: python -m backend.pipeline.data_downloader --dataset gse70678",
+                series_path,
+            )
+            return False
+
+        # 1. Parse the series matrix
+        logger.info("Processing GSE70678 series matrix → gene-level TSV...")
+        probe_df, meta = parse_geo_series_matrix(series_path)
+
+        # 2. Map probes → gene symbols using GPL6244 annotation
+        mapper = ProbeMapper()
+        mapper.load()
+        coverage = mapper.get_coverage(probe_df.index.tolist())
+        logger.info(
+            "Probe coverage: %d/%d mapped (%.1f%%)",
+            coverage["mapped_probes"], coverage["total_probes"],
+            coverage["coverage_pct"],
+        )
+
+        gene_df = mapper.map_probes_to_genes(probe_df, aggregation="median")
+
+        # 3. Save gene-level expression
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        gene_df.to_csv(out_path, sep="\t")
+        logger.info(
+            "✅ Saved gene expression matrix → %s (%d genes × %d samples)",
+            out_path, len(gene_df), len(gene_df.columns),
+        )
+
+        # 4. Save sample metadata summary
+        meta_path = Path("data/raw_omics/GSE70678_sample_metadata.tsv")
+        if "Sample_title" in meta:
+            import pandas as pd
+            titles = meta["Sample_title"]
+            gsm_ids = meta.get("Sample_geo_accession", [""] * len(titles))
+            pd.DataFrame({"gsm_id": gsm_ids, "title": titles}).to_csv(
+                meta_path, sep="\t", index=False
+            )
+            logger.info("Sample metadata saved → %s", meta_path)
+
+        return True
+
+    except Exception as exc:
+        logger.error("process_gse70678() failed: %s", exc)
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def process_gtex() -> bool:
+    """
+    Extract brain tissue columns from the GTEx v8 median TPM file and save
+    a compact reference TSV containing only the brain tissues needed for
+    differential expression vs ATRT.
+
+    Requires:
+      data/raw_omics/GTEx_v8_gene_median_tpm.gct.gz   (~300 MB)
+
+    Produces:
+      data/raw_omics/GTEx_brain_normal_reference.tsv
+        Rows  = HGNC gene symbols
+        Cols  = selected brain tissue names
+        Values = log2(median_TPM + 1)
+
+    Brain tissues extracted:
+      Brain - Cerebellum           (~50% of ATRT tumours are infratentorial)
+      Brain - Cerebellar Hemisphere
+      Brain - Cortex               (~35% of ATRT tumours are supratentorial)
+      Brain - Frontal Cortex (BA9)
+    """
+    import gzip as _gz
+    import pandas as pd
+
+    gz_path  = Path("data/raw_omics/GTEx_v8_gene_median_tpm.gct.gz")
+    out_path = Path("data/raw_omics/GTEx_brain_normal_reference.tsv")
+
+    if not gz_path.exists():
+        logger.error(
+            "GTEx file not found at %s. "
+            "Run: python -m backend.pipeline.data_downloader --dataset gtex_brain",
+            gz_path,
+        )
+        return False
+
+    logger.info("Processing GTEx v8 (extracting brain tissues)...")
+
+    try:
+        # GCT format:
+        #   Line 1: "#1.2"
+        #   Line 2: "n_genes\tn_samples"
+        #   Line 3: "Name\tDescription\tsample1\tsample2..."
+        #   Lines 4+: data
+        with _gz.open(gz_path, "rt", encoding="utf-8") as fh:
+            lines = fh.readlines()
+
+        # Skip GCT header lines
+        header_idx = 0
+        for i, ln in enumerate(lines):
+            if ln.startswith("Name\t"):
+                header_idx = i
+                break
+
+        if header_idx == 0:
+            raise ValueError("Could not find GCT column header in GTEx file")
+
+        logger.info("GTEx GCT header found at line %d", header_idx)
+
+        # Parse in chunks to manage memory — file is ~300 MB uncompressed
+        gct_text = "".join(lines[header_idx:])
+        df = pd.read_csv(
+            pd.io.common.StringIO(gct_text),
+            sep="\t",
+            low_memory=False,
+        )
+
+        # Rename columns
+        df = df.rename(columns={"Name": "ensembl_id", "Description": "gene_symbol"})
+
+        # The GTEx GCT gene column contains Ensembl IDs with version suffix,
+        # e.g., "ENSG00000111276.14". We prefer the Description = gene symbol.
+        if "gene_symbol" not in df.columns:
+            df["gene_symbol"] = df["ensembl_id"].str.split(".").str[0]
+
+        # Extract brain tissues
+        brain_tissue_patterns = [
+            "Brain - Cerebellum",
+            "Brain - Cerebellar Hemisphere",
+            "Brain - Cortex",
+            "Brain - Frontal Cortex (BA9)",
+        ]
+
+        selected_cols = ["gene_symbol"]
+        for pattern in brain_tissue_patterns:
+            matches = [c for c in df.columns if pattern.lower() in c.lower()]
+            selected_cols.extend(matches)
+            if not matches:
+                logger.warning("GTEx tissue not found: '%s'", pattern)
+
+        brain_df = df[selected_cols].copy()
+        brain_df = brain_df.dropna(subset=["gene_symbol"])
+        brain_df["gene_symbol"] = (
+            brain_df["gene_symbol"].astype(str).str.upper().str.strip()
+        )
+        brain_df = brain_df[brain_df["gene_symbol"] != ""].copy()
+
+        # Collapse duplicate gene symbols (take median)
+        tissue_cols = [c for c in brain_df.columns if c != "gene_symbol"]
+        for col in tissue_cols:
+            brain_df[col] = pd.to_numeric(brain_df[col], errors="coerce")
+
+        brain_df = brain_df.groupby("gene_symbol")[tissue_cols].median()
+
+        # Log2(TPM + 1) transform for comparability with Affymetrix log2 values
+        import numpy as np
+        brain_df = brain_df.apply(lambda col: np.log2(col + 1))
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        brain_df.to_csv(out_path, sep="\t")
+        logger.info(
+            "✅ GTEx brain reference saved → %s (%d genes × %d tissues)",
+            out_path, len(brain_df), len(tissue_cols),
+        )
+        logger.info("   Tissues: %s", tissue_cols)
+        return True
+
+    except Exception as exc:
+        logger.error("process_gtex() failed: %s", exc)
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Status check
+# ─────────────────────────────────────────────────────────────────────────────
+
 def check_data_status() -> Dict[str, bool]:
-    """Check which data files are present."""
+    """Print a detailed data readiness report."""
     checks = {
-        "GSE70678 (tissue expression)": Path("data/raw_omics/GSE70678_ATRT_expression.txt"),
-        "GSE106982 (methylation subgroups, optional)": Path("data/raw_omics/GSE106982_ATRT_methylation.txt"),
-        "DepMap CRISPRGeneEffect.csv": Path("data/depmap/CRISPRGeneEffect.csv"),
-        "DepMap Model.csv": Path("data/depmap/Model.csv"),
-        "CMap scores JSON": Path("data/cmap_query/atrt_cmap_scores.json"),
-        "CBTN ATRT genomics (optional)": Path("data/validation/cbtn_genomics/atrt/"),
+        "GPL6244 annotation (.gz)":            Path("data/raw_omics/GPL6244.annot.gz"),
+        "GPL6244 probe map (processed TSV)":   Path("data/raw_omics/GPL6244_probe_map.tsv"),
+        "GSE70678 series matrix (.gz)":        Path("data/raw_omics/GSE70678_series_matrix.txt.gz"),
+        "GSE70678 gene expression (processed)": Path("data/raw_omics/GSE70678_gene_expression.tsv"),
+        "GTEx v8 full file (.gz)":             Path("data/raw_omics/GTEx_v8_gene_median_tpm.gct.gz"),
+        "GTEx brain reference (processed)":    Path("data/raw_omics/GTEx_brain_normal_reference.tsv"),
+        "DepMap CRISPRGeneEffect.csv":         Path("data/depmap/CRISPRGeneEffect.csv"),
+        "DepMap Model.csv":                    Path("data/depmap/Model.csv"),
+        "CMap scores JSON":                    Path("data/cmap_query/atrt_cmap_scores.json"),
+        "GSE106982 methylation (optional)":    Path("data/raw_omics/GSE106982_series_matrix.txt.gz"),
     }
 
-    print("\n" + "═" * 60)
-    print("ATRT Pipeline Data Status")
-    print("═" * 60)
+    print("\n" + "═" * 62)
+    print("ATRT Pipeline  —  Data Readiness Report")
+    print("═" * 62)
 
-    status = {}
+    status: Dict[str, bool] = {}
     for label, path in checks.items():
-        present = path.exists()
+        present  = path.exists()
+        opt_tag  = " [optional]" if "optional" in label else ""
         size_str = ""
         if present and path.is_file():
-            size_mb = path.stat().st_size / (1024 * 1024)
-            size_str = f"  ({size_mb:.1f} MB)"
-        icon = "✅" if present else "❌"
-        opt  = " [optional]" if "optional" in label else ""
-        print(f"  {icon}  {label}{opt}{size_str}")
+            mb = path.stat().st_size / 1_048_576
+            size_str = f"  ({mb:.1f} MB)"
+        icon = "✅" if present else ("⬛" if opt_tag else "❌")
+        print(f"  {icon}  {label}{opt_tag}{size_str}")
         status[label] = present
 
-    # Minimum viable check
-    viable = (
-        checks["DepMap CRISPRGeneEffect.csv"].exists()
-        and checks["DepMap Model.csv"].exists()
-    )
-    gse_present = checks["GSE70678 (tissue expression)"].exists()
+    # Readiness summary
+    core_ready = all([
+        checks["GPL6244 probe map (processed TSV)"].exists(),
+        checks["GSE70678 gene expression (processed)"].exists(),
+        checks["GTEx brain reference (processed)"].exists(),
+        checks["DepMap CRISPRGeneEffect.csv"].exists(),
+        checks["DepMap Model.csv"].exists(),
+    ])
 
     print()
-    if viable and gse_present:
-        print("  ✅ Pipeline is FULLY operational")
-    elif viable:
-        print("  ⚠️  Pipeline is FUNCTIONAL (GSE70678 absent — will use curated scores)")
-        print("     Run: python -m backend.pipeline.data_downloader --dataset gse70678")
+    if core_ready:
+        print("  ✅ FULLY READY — all core data present")
     else:
-        print("  ❌ Pipeline NOT operational — DepMap files required")
-        print("     See DepMap download instructions above")
+        missing = []
+        if not checks["GPL6244 annotation (.gz)"].exists():
+            missing.append("GPL6244 (run --dataset gpl6244)")
+        if not checks["GSE70678 series matrix (.gz)"].exists():
+            missing.append("GSE70678 (run --dataset gse70678)")
+        if not checks["GTEx v8 full file (.gz)"].exists():
+            missing.append("GTEx brain (run --dataset gtex_brain)")
+        if not checks["DepMap CRISPRGeneEffect.csv"].exists():
+            missing.append("DepMap CSVs (manual download)")
+        print("  ❌ NOT READY — missing:", ", ".join(missing) if missing else "processed files")
+        if (
+            checks["GPL6244 annotation (.gz)"].exists()
+            and not checks["GPL6244 probe map (processed TSV)"].exists()
+        ):
+            print("     → Run: python -m backend.pipeline.data_downloader --process gpl6244")
+        if (
+            checks["GSE70678 series matrix (.gz)"].exists()
+            and not checks["GSE70678 gene expression (processed)"].exists()
+        ):
+            print("     → Run: python -m backend.pipeline.data_downloader --process gse70678")
+        if (
+            checks["GTEx v8 full file (.gz)"].exists()
+            and not checks["GTEx brain reference (processed)"].exists()
+        ):
+            print("     → Run: python -m backend.pipeline.data_downloader --process gtex")
 
-    print("═" * 60 + "\n")
+    print("═" * 62 + "\n")
     return status
 
 
-def download_gse70678() -> bool:
-    """Download GSE70678 from NCBI GEO."""
-    ds = DATASETS["gse70678"]
-    logger.info("Downloading %s", ds["name"])
-    logger.info("Reference: PMID %s", ds["pmid"])
-    success = download_file(ds["url"], ds["output_path"], compressed=ds["compressed"])
-    if success:
-        logger.info(ds["instructions"])
-    return success
+# ─────────────────────────────────────────────────────────────────────────────
+# Manual download instructions
+# ─────────────────────────────────────────────────────────────────────────────
 
+DEPMAP_INSTRUCTIONS = """
+══════════════════════════════════════════════════════════════
+DepMap 24Q4  —  Manual Download Required (portal auth needed)
+══════════════════════════════════════════════════════════════
+1. Go to: https://depmap.org/portal/download/all/
+2. Select release: DepMap Public 24Q4 (Oct 2024)
+3. Download: CRISPRGeneEffect.csv  (~500 MB)
+             Model.csv             (~5 MB)
+4. Place in: data/depmap/
 
-def download_gse106982() -> bool:
-    """Download GSE106982 from NCBI GEO (optional)."""
-    ds = DATASETS["gse106982"]
-    logger.info("Downloading %s", ds["name"])
-    return download_file(ds["url"], ds["output_path"], compressed=ds["compressed"])
+   mkdir -p data/depmap
+   mv ~/Downloads/CRISPRGeneEffect.csv data/depmap/
+   mv ~/Downloads/Model.csv            data/depmap/
 
-
-def print_all_instructions() -> None:
-    """Print all manual download instructions."""
-    print(DEPMAP_MANUAL_INSTRUCTIONS)
-    print(CMAP_MANUAL_INSTRUCTIONS)
-    print(CBTN_MANUAL_INSTRUCTIONS)
+Expected ATRT/rhabdoid lines in Model.csv:
+  BT16 (ACH-000725)  BT37 (ACH-000881)
+  G401 (ACH-000039)  A204 (ACH-000658)
+══════════════════════════════════════════════════════════════
+"""
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="ATRT Pipeline Data Downloader",
+        description="ATRT Pipeline Data Downloader v2.0",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
     )
     parser.add_argument(
         "--dataset",
-        choices=["gse70678", "gse106982", "all"],
-        help="Which dataset to download",
+        choices=["gpl6244", "gse70678", "gtex_brain", "gse106982", "all"],
+        help="Dataset to download",
     )
     parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Check which data files are present",
+        "--process",
+        choices=["gpl6244", "gse70678", "gtex", "all"],
+        help="Post-process a downloaded dataset (probe mapping / extraction)",
     )
     parser.add_argument(
-        "--instructions",
-        action="store_true",
-        help="Print manual download instructions for DepMap/CMap/CBTN",
+        "--check",  action="store_true",
+        help="Show data readiness report",
+    )
+    parser.add_argument(
+        "--instructions", action="store_true",
+        help="Print manual download instructions (DepMap, CMap, CBTN)",
     )
     args = parser.parse_args()
 
-    if args.check or (not args.dataset and not args.instructions):
+    if args.check or (not args.dataset and not args.process and not args.instructions):
         check_data_status()
-
-    if args.instructions:
-        print_all_instructions()
         return
 
-    if args.dataset == "gse70678" or args.dataset == "all":
-        download_gse70678()
+    if args.instructions:
+        print(DEPMAP_INSTRUCTIONS)
+        return
 
-    if args.dataset == "gse106982" or args.dataset == "all":
-        download_gse106982()
+    # ── Downloads ─────────────────────────────────────────────────────────────
+    if args.dataset:
+        keys = list(DATASETS.keys()) if args.dataset == "all" else [args.dataset]
+        for key in keys:
+            ds = DATASETS[key]
+            logger.info("═" * 55)
+            logger.info("Downloading: %s", ds["name"])
+            if ds.get("pmid"):
+                logger.info("  Reference: PMID %s", ds["pmid"])
+            logger.info("  Note: %s", ds.get("note", ""))
+            download_file(ds["url"], ds["output_path"])
 
-    if args.dataset == "all":
-        print(DEPMAP_MANUAL_INSTRUCTIONS)
-        print(CMAP_MANUAL_INSTRUCTIONS)
+    # ── Post-processing ───────────────────────────────────────────────────────
+    if args.process:
+        procs = ["gpl6244", "gse70678", "gtex"] if args.process == "all" else [args.process]
+
+        if "gpl6244" in procs:
+            # GPL6244 is parsed by ProbeMapper on first use — just trigger it
+            logger.info("Triggering GPL6244 annotation parsing via ProbeMapper...")
+            import sys; sys.path.insert(0, str(Path(__file__).parent))
+            from probe_mapper import ProbeMapper
+            m = ProbeMapper()
+            gz = Path("data/raw_omics/GPL6244.annot.gz")
+            if gz.exists():
+                # Temporarily set cache to the gz location for ProbeMapper
+                m.cache_path = Path("data/raw_omics/GPL6244_probe_map.tsv")
+                m._download_and_parse()  # Will read from our downloaded .gz
+            else:
+                m.load()  # Will download itself if needed
+
+        if "gse70678" in procs:
+            logger.info("Processing GSE70678 (probe → gene mapping)...")
+            ok = process_gse70678()
+            if ok:
+                logger.info("✅ GSE70678 processing complete")
+            else:
+                logger.error("❌ GSE70678 processing failed — see above")
+
+        if "gtex" in procs:
+            logger.info("Processing GTEx (extracting brain tissues)...")
+            ok = process_gtex()
+            if ok:
+                logger.info("✅ GTEx processing complete")
+            else:
+                logger.error("❌ GTEx processing failed — see above")
 
     check_data_status()
 
