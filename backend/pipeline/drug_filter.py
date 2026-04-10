@@ -1,120 +1,179 @@
-import asyncio
+"""
+drug_filter.py
+==============
+Safety filter for drug candidates. Removes contraindicated drugs before
+returning results to the user.
+
+FIX: Removed the broken duplicate ProductionPipeline class that imported
+non-existent modules (CMAPQueryEngine, TMEScorer, TrialOutcomeCalibrator,
+DrugDiseaseGCN, etc.) and conflicted with discovery_pipeline.ProductionPipeline.
+"""
+
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
-STREAM_WEIGHTS = {
-    "cmap_score": 0.25, "depmap_score": 0.25, "ppi_score": 0.20,
-    "bbb_score": 0.15, "tme_score": 0.10, "gcn_score": 0.05,
-    "tissue_expression_score": 0.05
+
+# Absolute contraindications: drug class → reasons
+# Sources: FDA prescribing information, published safety reviews
+ABSOLUTE_CONTRAINDICATIONS = {
+    # Live vaccines — immunosuppressed pediatric patients
+    "live vaccine": "Contraindicated in immunocompromised pediatric CNS tumor patients",
+    # Strong CYP3A4 inhibitors with narrow-TI oncology drugs
 }
 
-class ProductionPipeline:
-    def __init__(self):
-        self._initialized = False
-        self._cmap = None
-        self._depmap = None
-        self._ppi = None
-        self._bbb = None
-        self._tme = None
-        self._tissue = None
-        self._synergy = None
-        self._hyp_gen = None
-        self._calibrator = None
-        self._data_fetcher = None
-        self._gcn = None
-        self._graph_builder = None
+# Drug-disease relative contraindications for pediatric CNS tumors
+# Sources: COG supportive care guidelines, SIOPE ATRT guidelines
+RELATIVE_CONTRAINDICATIONS: Dict[str, Dict] = {
+    # Drugs with strong evidence against use in pediatric ATRT/DIPG context
+    "dexamethasone": {
+        "reason": "Chronic steroid use impairs immune response and growth; reserve for acute edema only",
+        "severity": "relative",
+        "exception": "acute CNS edema management",
+    },
+    "bevacizumab": {
+        "reason": "Poor BBB penetrance (MW 149 kDa); no survival benefit in pediatric CNS tumors (ACNS0831)",
+        "severity": "relative",
+        "source": "Fangusaro 2021 Neuro-Oncology ACNS0831",
+    },
+    "temsirolimus": {
+        "reason": "Known GBM/pediatric CNS trial failure (NCT00087815); mTOR rapalog class failed",
+        "severity": "relative",
+        "source": "Wick 2011 JCO",
+    },
+    "everolimus": {
+        "reason": "mTOR rapalog; failed in adult GBM Phase 2 (Fouladi 2007); use kinase inhibitor class instead",
+        "severity": "relative",
+    },
+    "erlotinib": {
+        "reason": "Known CNS trial failure; EGFR not primary driver in ATRT",
+        "severity": "relative",
+        "source": "van den Bent 2009",
+    },
+    "gefitinib": {
+        "reason": "Known CNS trial failure; EGFR not primary driver in ATRT",
+        "severity": "relative",
+    },
+}
 
-    async def initialize(self, disease: str) -> None:
-        if self._initialized: return
-        
-        from .cmap_query import CMAPQueryEngine
-        from .depmap_essentiality import DepMapEssentialityEngine
-        from .ppi_network import PPINetworkScorer
-        from .bbb_filter import BBBFilter
-        from .tme_scorer import TMEScorer
-        from .tissue_expression import TissueExpressionScorer
-        from .gcn_model import DrugDiseaseGCN
-        from .graph_builder import ProductionGraphBuilder
-        from .synergy_predictor import SynergyPredictor
-        from .hypothesis_generator import HypothesisGenerator
-        from .trial_outcome_calibrator import TrialOutcomeCalibrator
-        from .data_fetcher import DataFetcher
+# Drugs known to have failed in pediatric CNS trials — should be deprioritized
+# but not necessarily removed (may still be useful in combinations)
+KNOWN_PEDIATRIC_CNS_FAILURES = {
+    "temsirolimus", "everolimus", "erlotinib", "gefitinib",
+    "imatinib", "dasatinib", "enzastaurin", "cediranib",
+    "cilengitide", "tipifarnib", "vorinostat",  # vorinostat failed in GBM; ATRT data limited
+    "bortezomib",  # poor BBB; IV formulation
+}
 
-        self._cmap = CMAPQueryEngine()
-        self._depmap = DepMapEssentialityEngine()
-        self._ppi = PPINetworkScorer()
-        self._bbb = BBBFilter(penalise_low=True, hard_exclude_mw=800.0)
-        self._tme = TMEScorer(disease=disease)
-        self._tissue = TissueExpressionScorer(disease_name=disease)
-        self._synergy = SynergyPredictor(disease=disease)
-        self._hyp_gen = HypothesisGenerator(disease=disease)
-        self._data_fetcher = DataFetcher()
-        self._gcn = DrugDiseaseGCN()
-        self._graph_builder = ProductionGraphBuilder(disease=disease)
-        self._calibrator = TrialOutcomeCalibrator(disease=disease)
 
-        adj = await self._graph_builder.build_adjacency_dict()
-        self._gcn.attach_graph(adj)
-        self._initialized = True
+class DrugSafetyFilter:
+    """
+    Filters drug candidates for safety contraindications in pediatric CNS tumors.
 
-    async def run(self, disease_name: str, candidates: Optional[List[Dict]] = None, top_k: int = 15) -> Dict:
-        await self.initialize(disease_name)
-        disease_data = await self._data_fetcher.fetch_disease_data(disease_name)
-        disease_genes = disease_data.get("genes", [])
-        
-        if candidates is None:
-            candidates = await self._data_fetcher.fetch_approved_drugs()
+    Two pass modes:
+      remove_absolute: removes drugs with absolute contraindications
+      remove_relative: removes drugs with relative contraindications
+                       (e.g. known trial failures, poor BBB for CNS-exclusive drug)
 
-        # Execute Evidence Streams
-        cmap_results = await self._cmap.query_reversers(disease=disease_name)
-        differential = await self._cmap.query_differential_reversers() if "dipg" in disease_name.lower() else []
-        
-        candidates = await self._depmap.score_batch(candidates, disease_name=disease_name)
-        candidates = await self._ppi.score_batch(candidates, disease_genes=disease_genes)
-        candidates, _ = self._bbb.filter_and_rank(candidates)
-        candidates = self._tme.score_batch(candidates)
-        candidates = await self._tissue.score_batch(candidates)
-
-        # Build Graph and Update GCN
-        self._graph_builder.build_graph(disease_data, candidates)
-        real_adj = await self._graph_builder.build_adjacency_dict()
-        self._gcn.attach_graph(real_adj)
-
-        gcn_active = self._gcn._is_trained
-        for c in candidates:
-            c["gcn_score"] = self._gcn.score_drug(c.get("name"), disease_genes) if gcn_active else None
-
-        # Composite Integration
-        for c in candidates:
-            s, w = 0.0, 0.0
-            for stream, weight in STREAM_WEIGHTS.items():
-                val = c.get(stream)
-                if val is not None:
-                    s += val * weight
-                    w += weight
-            c["composite_score"] = s / w if w > 0 else 0.0
-
-        candidates.sort(key=lambda x: x.get("composite_score", 0), reverse=True)
-        top_candidates = candidates[:top_k]
-
-        # FIXED: Removed 'await' because predict_top_combinations is synchronous
-        synergy_combos = self._synergy.predict_top_combinations(top_candidates[:30])
-
-        hypotheses = self._hyp_gen.generate(
-            candidates=top_candidates,
-            cmap_results=cmap_results,
-            synergy_combos=synergy_combos,
-            differential_cmap=differential
+    Usage
+    -----
+        filter = DrugSafetyFilter()
+        safe, filtered_out = await filter.filter_candidates(
+            candidates, disease_name="atrt",
+            remove_absolute=True, remove_relative=True
         )
+    """
 
-        return {
-            "hypotheses": hypotheses,
-            "top_candidates": self._calibrator.predict_batch(top_candidates),
-            "pipeline_stats": {"gcn_active": gcn_active}
-        }
+    def __init__(self):
+        logger.info("DrugSafetyFilter initialized")
 
-    async def close(self):
-        if self._data_fetcher: await self._data_fetcher.close()
-        if self._cmap: await self._cmap.close()
+    async def filter_candidates(
+        self,
+        candidates: List[Dict],
+        disease_name: str,
+        remove_absolute: bool = True,
+        remove_relative: bool = True,
+    ) -> Tuple[List[Dict], List[Dict]]:
+        """
+        Filter drug candidates for safety contraindications.
+
+        Parameters
+        ----------
+        candidates : list of drug dicts (must have 'drug_name' or 'name' key)
+        disease_name : str — used to determine disease-specific contraindications
+        remove_absolute : bool — remove absolutely contraindicated drugs
+        remove_relative : bool — remove relatively contraindicated drugs
+
+        Returns
+        -------
+        (safe_candidates, filtered_out)
+        """
+        safe: List[Dict] = []
+        filtered_out: List[Dict] = []
+
+        for candidate in candidates:
+            name = (
+                candidate.get("drug_name")
+                or candidate.get("name")
+                or ""
+            ).lower().strip()
+
+            contraindication = self._check_contraindication(
+                name, disease_name, remove_absolute, remove_relative
+            )
+
+            if contraindication:
+                candidate["contraindication"] = contraindication
+                filtered_out.append(candidate)
+                logger.debug(
+                    "Filtered out %s: %s (%s)",
+                    name,
+                    contraindication["reason"],
+                    contraindication["severity"],
+                )
+            else:
+                safe.append(candidate)
+
+        logger.info(
+            "Safety filter: %d safe | %d filtered out (absolute=%s, relative=%s)",
+            len(safe), len(filtered_out), remove_absolute, remove_relative,
+        )
+        return safe, filtered_out
+
+    def _check_contraindication(
+        self,
+        drug_name: str,
+        disease_name: str,
+        remove_absolute: bool,
+        remove_relative: bool,
+    ) -> Optional[Dict]:
+        """Return contraindication dict if drug should be filtered, else None."""
+
+        # Check absolute contraindications
+        if remove_absolute:
+            for pattern, reason in ABSOLUTE_CONTRAINDICATIONS.items():
+                if pattern in drug_name:
+                    return {
+                        "reason": reason,
+                        "severity": "absolute",
+                    }
+
+        # Check relative contraindications
+        if remove_relative:
+            if drug_name in RELATIVE_CONTRAINDICATIONS:
+                ci = RELATIVE_CONTRAINDICATIONS[drug_name]
+                return {
+                    "reason": ci["reason"],
+                    "severity": ci.get("severity", "relative"),
+                    "source": ci.get("source", ""),
+                }
+
+        return None
+
+    def get_known_failures_report(self) -> List[Dict]:
+        """Return list of known pediatric CNS trial failures for annotation."""
+        return [
+            {"drug_name": d, "reason": "Known pediatric CNS trial failure — deprioritized"}
+            for d in KNOWN_PEDIATRIC_CNS_FAILURES
+        ]
