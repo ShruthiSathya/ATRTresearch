@@ -58,22 +58,15 @@ DATASETS: Dict[str, Dict] = {
 
     # ── GPL6244 probe annotation ──────────────────────────────────────────────
     "gpl6244": {
-        "name":        "GPL6244 — Affymetrix HuGene 1.0 ST probe annotation",
-        "url":         (
-            "https://ftp.ncbi.nlm.nih.gov/geo/platforms/"
-            "GPL6nnn/GPL6244/annot/GPL6244.annot.gz"
-        ),
-        "output_path": "data/raw_omics/GPL6244.annot.gz",
-        "processed":   "data/raw_omics/GPL6244_probe_map.tsv",
-        "compressed":  False,   # Keep .gz; ProbeMapper handles decompression
+        "name":        "GPL570 — Affymetrix HG-U133 Plus 2.0 probe annotation",
+        "url":         "https://ftp.ncbi.nlm.nih.gov/geo/platforms/GPL0nnn/GPL570/annot/GPL570.annot.gz",
+        "output_path": "data/raw_omics/GPL570.annot.gz",
+        "processed":   "data/raw_omics/GPL570_probe_map.tsv",
+        "compressed":  False,
         "size_mb":     5,
         "required":    True,
         "pmid":        None,
-        "note": (
-            "Annotation file mapping Affymetrix probe IDs (e.g., '200099_s_at') "
-            "to HGNC gene symbols. Required to convert GSE70678 from probe IDs "
-            "to gene symbols. The ProbeMapper class will parse this automatically."
-        ),
+        "note":        "Corrected for GSE70678 ATRT samples.",
     },
 
     # ── GSE70678 ATRT bulk RNA-seq ────────────────────────────────────────────
@@ -99,7 +92,7 @@ DATASETS: Dict[str, Dict] = {
     "gtex_brain": {
         "name":        "GTEx v8 — Gene median TPM (all tissues, ~300 MB)",
         "url":         (
-            "https://storage.googleapis.com/gtex_analysis_v8/rna_seq_data/"
+            "https://storage.googleapis.com/adult-gtex/bulk-gex/v8/rna-seq/"
             "GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz"
         ),
         "output_path": "data/raw_omics/GTEx_v8_gene_median_tpm.gct.gz",
