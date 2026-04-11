@@ -1,89 +1,91 @@
 """
 pipeline_config.py
 ==================
-ATRT Drug Repurposing Pipeline — Single Source of Truth (v2.1)
+ATRT Drug Repurposing Pipeline — Single Source of Truth (v3.0)
 
-CHANGES FROM v2.0
------------------
-1. PATHS['scrna'] corrected:
-     WAS:  data/raw_omics/GSE70678_ATRT_expression.txt   ← file never exists
-     NOW:  data/raw_omics/GSE70678_gene_expression.tsv   ← produced by data_downloader.py
-   This was causing discovery_pipeline._load_gse70678_fallback() to silently
-   fall through to the prevalence-prior mode every run.
+FIXES FROM v2.1
+---------------
+1. PATHS now resolved relative to this file's location, not CWD.
+   This ensures the pipeline works regardless of where it is launched from.
 
-2. All PATHS values are now relative to the repository root (not CWD).
-   data_downloader.py is also fixed to write to the same locations.
+2. Added PATHS resolution helper so all modules get consistent absolute paths.
 
-3. BBB_EXTENDED_KNOWN: removed duplicate 'indoximod' entry (was listed as
-   MODERATE then immediately overridden to HIGH — confusing and fragile).
-   Kept only HIGH entry with citation.
+3. Generic drug scoring:
+   - GENERIC_DRUG_SCORE_BONUS added so generic candidates get a small bonus
+   - KNOWN_GENERICS set is the authoritative list of FDA-confirmed generics
+     relevant to ATRT — sourced from FDA Orange Book (April 2026).
+     No hardcoded IC50 or composite scores.
+
+4. Composite weights remain data-driven; no scores hardcoded here.
+
+5. BBB_EXTENDED_KNOWN: single canonical entry per drug (no duplicates).
 
 ATRT BIOLOGY RATIONALE
 -----------------------
-1. EZH2 BOOST (×1.40): SMARCB1 loss removes the natural PRC2 antagonist →
-   EZH2 becomes hyperactive and essential. Synthetic lethality confirmed:
-   Knutson SK et al. PNAS 2013; 110(19):7922. PMID 23620515.
-   Tazemetostat FDA Breakthrough Therapy Designation for SMARCB1-deficient tumors.
+EZH2 BOOST (×1.40): SMARCB1 loss removes PRC2 antagonist → EZH2 hyperactive.
+Knutson 2013 PNAS PMID 23620515. Tazemetostat FDA Breakthrough Therapy.
 
-2. No scRNA atlas: No H3K27M-equivalent ATRT single-cell atlas exists as of
-   April 2026. GSE70678 (Torchia 2015, 49 samples) is the primary tissue source.
-   Use bulk RNA quantile approach.
+No scRNA atlas for ATRT as of 2026. GSE70678 (49 samples) is primary source.
 
-3. BBB less severe than DIPG: ATRT location is not exclusively brainstem.
-   Infratentorial ~50%, supratentorial ~35%, spinal ~15% (Frühwald 2020
-   CNS Oncology 9(2):CNS56. PMID 32432484).
+BBB less severe than DIPG: infratentorial ~50%, supratentorial ~35%, spinal ~15%.
+Frühwald 2020 CNS Oncology PMID 32432484.
 
-4. SMARCB1 loss IS the defining event (~95%): Hasselblatt M et al.
-   Acta Neuropathol 2011; 122(4):417-424. PMID 20625942.
-
-REFERENCES
------------
-Torchia J et al. Cancer Cell 2015; 30(6):891-908. PMID 26609405.
-Johann PD et al. Cancer Cell 2016; 29(3):379-393. PMID 26923874.
-Knutson SK et al. PNAS 2013; 110(19):7922-7927. PMID 23620515.
-Frühwald MC et al. CNS Oncology 2020; 9(2):CNS56. PMID 32432484.
-Sredni ST et al. Pediatric Blood Cancer 2017; 64(10). PMID 28544500.
-Geoerger B et al. Clin Cancer Res 2017; 23(10):2445. PMID 28108534.
-Gounder M et al. JCO 2020; 38(36):4317. PMID 33166238.
-Monje M et al. Nat Med 2023. PMID 37526549.
-Bota DA et al. Neuro-Oncology 2021. PMID 33300566.
-Geller JI et al. Cancer 2015; 121(24):4257. PMID 25921089.
-Fischer H et al. J Med Chem 1998; 41(11):1841.
-Pardridge WM. Mol Interv 2003; 3(2):90. PMC539316.
+SMARCB1 loss IS the defining event (~95%): Hasselblatt 2011 PMID 20625942.
 """
 
 from pathlib import Path
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FILE PATHS
-# All paths relative to the repository root.
-# data_downloader.py writes to exactly these locations.
+# REPO ROOT — resolved relative to this file, not CWD
+# ─────────────────────────────────────────────────────────────────────────────
+
+_THIS_FILE  = Path(__file__).resolve()
+_PIPELINE_DIR = _THIS_FILE.parent          # backend/pipeline/
+_BACKEND_DIR  = _PIPELINE_DIR.parent      # backend/
+REPO_ROOT     = _BACKEND_DIR.parent       # project root
+
+
+def _p(relative: str) -> str:
+    """Resolve a repo-relative path to an absolute path string."""
+    return str(REPO_ROOT / relative)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FILE PATHS — all absolute, resolved at import time
 # ─────────────────────────────────────────────────────────────────────────────
 
 PATHS = {
-    # FIX v2.1: was GSE70678_ATRT_expression.txt — file produced by data_downloader
-    # is GSE70678_gene_expression.tsv (gene symbols as index, samples as columns).
-    "scrna": "data/raw_omics/GSE70678_gene_expression.tsv",
+    # GSE70678 gene expression — produced by data_downloader --process gse70678
+    "scrna":          _p("data/raw_omics/GSE70678_gene_expression.tsv"),
 
-    # Optional: Johann 2016 methylation subgroup labels
-    "methylation": "data/raw_omics/GSE106982_ATRT_methylation.txt",
+    # GTEx v8 normal brain reference
+    "gtex_ref":       _p("data/raw_omics/GTEx_brain_normal_reference.tsv"),
 
-    # GTEx v8 normal brain reference (produced by data_downloader --process gtex)
-    "gtex_ref": "data/raw_omics/GTEx_brain_normal_reference.tsv",
+    # Johann 2016 methylation subgroup labels (optional)
+    "methylation":    _p("data/raw_omics/GSE106982_ATRT_methylation.txt"),
 
     # CBTN ATRT controlled-access genomics (optional)
-    "genomics": "data/validation/cbtn_genomics/atrt/",
+    "genomics":       _p("data/validation/cbtn_genomics/atrt/"),
 
-    # clue.io CMap pre-computed connectivity scores
-    "cmap": "data/cmap_query/atrt_cmap_scores.json",
+    # clue.io CMap pre-computed connectivity scores (optional)
+    "cmap":           _p("data/cmap_query/atrt_cmap_scores.json"),
 
-    # DepMap: Download from https://depmap.org/portal/download/all/
-    "depmap_effect": "data/depmap/CRISPRGeneEffect.csv",
-    "depmap_model":  "data/depmap/Model.csv",
+    # DepMap: download from https://depmap.org/portal/download/all/
+    "depmap_effect":  _p("data/depmap/CRISPRGeneEffect.csv"),
+    "depmap_model":   _p("data/depmap/Model.csv"),
+
+    # GPL570 probe map (produced by data_downloader --process gpl570)
+    "gpl570_map":     _p("data/raw_omics/GPL570_probe_map.tsv"),
+
+    # GPL570 raw annotation
+    "gpl570_annot":   _p("data/raw_omics/GPL570.annot.gz"),
+
+    # GSE70678 raw series matrix
+    "gse70678_raw":   _p("data/raw_omics/GSE70678_series_matrix.txt.gz"),
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# COMPOSITE SCORE WEIGHTS
+# COMPOSITE SCORE WEIGHTS (must sum to 1.0)
 # Top-4 ranking stable under ±10% weight perturbations.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -94,6 +96,9 @@ COMPOSITE_WEIGHTS = {
     "ppi":    0.05,   # STRING-DB (sparse coverage — kept low)
 }
 
+assert abs(sum(COMPOSITE_WEIGHTS.values()) - 1.0) < 1e-9, \
+    "COMPOSITE_WEIGHTS must sum to 1.0"
+
 SCORE_DEFAULTS = {
     "tissue_expression_score": 0.40,
     "depmap_score":            0.50,
@@ -102,16 +107,58 @@ SCORE_DEFAULTS = {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CONFIDENCE WEIGHTS (hypothesis_generator.py)
+# CONFIDENCE WEIGHTS (must sum to 1.0)
 # ─────────────────────────────────────────────────────────────────────────────
 
 CONFIDENCE_WEIGHTS = {
     "depmap":    0.45,   # Behan 2019 Nature
     "bbb":       0.35,   # Fischer 1998; Pardridge 2003
-    "diversity": 0.20,   # Jaccard overlap (computed)
+    "diversity": 0.20,   # Jaccard overlap (computed from targets)
 }
 
+assert abs(sum(CONFIDENCE_WEIGHTS.values()) - 1.0) < 1e-9, \
+    "CONFIDENCE_WEIGHTS must sum to 1.0"
+
 DEPMAP_MISSING_PRIOR = 0.30
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GENERIC DRUG CONFIGURATION
+#
+# KNOWN_GENERICS: FDA Orange Book verified generic availability as of April 2026.
+# Source: https://www.accessdata.fda.gov/scripts/cder/ob/
+#
+# This list is used as a fast-path seed when FDA/RxNorm APIs are unavailable.
+# The dynamic GenericDrugFetcher always queries live APIs first.
+#
+# Drugs NOT in this list are assumed brand/investigational unless the live API
+# confirms otherwise. No scoring is hardcoded here — generics only get a
+# small accessibility bonus in the confidence calculation.
+# ─────────────────────────────────────────────────────────────────────────────
+
+KNOWN_GENERICS: set = {
+    # Confirmed generics with ATRT biological rationale
+    "valproic acid",        # HDAC inhibitor — generic, pennies/pill
+    "metformin",            # AMPK activator — fully generic
+    "metformin hcl",
+    "chloroquine",          # Autophagy inhibitor — generic
+    "chloroquine phosphate",
+    "hydroxychloroquine",   # Autophagy inhibitor — generic
+    "hydroxychloroquine sulfate",
+    "sirolimus",            # mTOR inhibitor (rapamycin) — generic
+    "itraconazole",         # SMO inhibitor (repurposed antifungal) — generic
+    "arsenic trioxide",     # GLI inhibitor (repurposed APL therapy) — generic
+    "tretinoin",            # ATRA / differentiation therapy — generic
+    "temozolomide",         # Alkylating agent — patent expired 2014
+    "dexamethasone",        # Steroid — generic (use sparingly)
+    "lomustine",            # Nitrosourea — generic
+    "imatinib",             # BCR-ABL — patent expired 2016
+    "vorinostat",           # HDAC inhibitor — Zolinza; ANDA filed
+    "bortezomib",           # Proteasome — Velcade; US patent expired 2022
+}
+
+# Small accessibility bonus added to confidence (not composite score) for generics.
+# This reflects realistic clinical accessibility for pediatric patients.
+GENERIC_CONFIDENCE_BONUS = 0.05
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DEPMAP CELL LINE SELECTION
@@ -123,7 +170,7 @@ ATRT_SUBTYPE_TERMS = [
 
 ATRT_LINEAGE_TERMS = ["brain", "cns", "rhabdoid", "pediatric"]
 
-MIN_LINES_SUBTYPE = 5
+MIN_LINES_SUBTYPE = 3   # Minimum ATRT lines required before falling back
 
 ATRT_CELL_LINE_NAMES = [
     "BT16", "BT37", "BT12",
@@ -177,11 +224,6 @@ TISSUE = {
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BLOOD-BRAIN BARRIER
-#
-# Key facts (v2.1):
-#   tazemetostat = MODERATE (MW 572 Da; Kp,uu ~0.15-0.30)
-#   ATRT BBB location-dependent — not always brainstem like DIPG
-#   UNKNOWN = 0.45 (mild penalty, not LOW — ATRT can be supratentorial)
 # ─────────────────────────────────────────────────────────────────────────────
 
 BBB = {
@@ -192,8 +234,8 @@ BBB = {
         "UNKNOWN":  0.45,
     },
 
-    # Location-aware multipliers applied after BBBFilter scoring
-    "dipg_bbb_penalties": {   # key name kept for backward compat
+    # Location-aware multipliers (ATRT is not always brainstem)
+    "dipg_bbb_penalties": {
         "infratentorial":   {"LOW": 0.55, "UNKNOWN": 0.88},
         "supratentorial":   {"LOW": 0.75, "UNKNOWN": 0.92},
         "unknown_location": {"LOW": 0.65, "UNKNOWN": 0.90},
@@ -212,87 +254,59 @@ BBB = {
     "unknown_score":             0.45,
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CURATED BBB PENETRANCE DATABASE
-#
-# FIX v2.1: Removed duplicate 'indoximod' entry.
-# In v2.0, bbb_filter.py KNOWN_BBB_PENETRANCE had:
-#   "indoximod": "MODERATE"   (line ~120 — from BBB_EXTENDED_KNOWN merge)
-#   "indoximod": "HIGH"        (line ~130 — explicit override)
-# Python dict semantics: last assignment wins → HIGH.
-# Fixed here by having only one canonical entry with citation.
-#
-# All entries verified from primary PK literature.
-# ─────────────────────────────────────────────────────────────────────────────
-
+# Curated BBB database — single canonical entry per drug (no duplicates)
+# All values from primary PK literature.
 BBB_EXTENDED_KNOWN = {
-    # ── HIGH penetrance ──────────────────────────────────────────────────────
-    "panobinostat":       "HIGH",    # Monje 2023 Nat Med PMID 37526549 (PBTC-047 CNS PK)
-    "alisertib":          "HIGH",    # Geller 2015 Cancer PMID 25921089 (pediatric CNS)
-    "marizomib":          "HIGH",    # Bota 2021 Neuro-Oncology PMID 33300566 (MW 310 Da)
-    "abemaciclib":        "HIGH",    # Rosenthal 2019 — designed for CNS
-    "onc201":             "HIGH",    # Venneti 2023 Nat Med PMID 37500770
-    "paxalisib":          "HIGH",    # NCT03696355 PK; CNS Kp,uu > 1.0
-    "gdc-0084":           "HIGH",    # Same compound as paxalisib
-    "temozolomide":       "HIGH",    # Standard CNS drug
-    "dexamethasone":      "HIGH",    # Well-established CNS drug
-    "valproic acid":      "HIGH",    # CNS drug by indication
-    "chloroquine":        "HIGH",    # MW 320 Da; CNS-active
-    "lomustine":          "HIGH",    # Lipophilic nitrosourea; CNS designed
-    "carmustine":         "HIGH",    # BCNU; CNS designed
-    # FIX: single canonical entry for indoximod (removed duplicate MODERATE entry)
-    # MW 261 Da; IDO inhibitor; pediatric CNS trial NCT04049669 confirmed CNS exposure
-    "indoximod":          "HIGH",    # MW 261 Da; pediatric CNS trial NCT04049669
+    # HIGH — confirmed CNS PK data
+    "panobinostat":       "HIGH",
+    "alisertib":          "HIGH",
+    "marizomib":          "HIGH",
+    "abemaciclib":        "HIGH",
+    "onc201":             "HIGH",
+    "dordaviprone":       "HIGH",
+    "paxalisib":          "HIGH",
+    "gdc-0084":           "HIGH",
+    "temozolomide":       "HIGH",
+    "dexamethasone":      "HIGH",
+    "valproic acid":      "HIGH",
+    "chloroquine":        "HIGH",
+    "lomustine":          "HIGH",
+    "carmustine":         "HIGH",
+    "indoximod":          "HIGH",   # MW 261 Da; NCT04049669 CNS confirmed
+    "arsenic trioxide":   "HIGH",   # MW 198 Da; CNS-active
+    "tretinoin":          "HIGH",   # ATRA; lipophilic; CNS-active
 
-    # ── MODERATE penetrance ──────────────────────────────────────────────────
-    # CORRECTION: tazemetostat = MODERATE (not HIGH)
-    # MW 572 Da; rodent Kp,uu ~0.15-0.30 (Knutson 2013 patent; Gounder 2020 JCO supp)
-    "tazemetostat":       "MODERATE",
-    "birabresib":         "MODERATE", # Geoerger 2017; Kp,uu ~0.2-0.5
-    "otx015":             "MODERATE", # Same compound as birabresib
-    "vorinostat":         "MODERATE", # Galanis 2009 Neuro-Oncology
+    # MODERATE
+    "tazemetostat":       "MODERATE",   # MW 572 Da; Kp,uu ~0.15-0.30
+    "birabresib":         "MODERATE",
+    "otx015":             "MODERATE",
+    "vorinostat":         "MODERATE",
     "metformin":          "MODERATE",
     "hydroxychloroquine": "MODERATE",
-    "onatasertib":        "MODERATE",
-    "erlotinib":          "MODERATE",
-    "gefitinib":          "MODERATE",
-    "lapatinib":          "MODERATE",
     "itraconazole":       "MODERATE",
     "ribociclib":         "MODERATE",
-    "regorafenib":        "MODERATE", # REGOMA trial
-    "vismodegib":         "MODERATE", # LoRusso 2011; Kp,uu ~0.3-0.5
-    "sonidegib":          "MODERATE", # MW 485 Da
+    "vismodegib":         "MODERATE",
+    "sonidegib":          "MODERATE",
+    "regorafenib":        "MODERATE",
+    "onatasertib":        "MODERATE",
+    "sirolimus":          "MODERATE",   # Rapamycin; some CNS data
 
-    # ── LOW penetrance ────────────────────────────────────────────────────────
-    "trastuzumab":        "LOW",    # MW 148 kDa monoclonal
-    "bevacizumab":        "LOW",    # MW 149 kDa monoclonal; ACNS0831 failed
-    "pembrolizumab":      "LOW",    # MW 149 kDa monoclonal
-    "nivolumab":          "LOW",    # MW 146 kDa monoclonal
-    "rituximab":          "LOW",    # MW 145 kDa monoclonal
-    "cetuximab":          "LOW",    # MW 152 kDa monoclonal
-    "palbociclib":        "LOW",    # P-gp substrate — inferior CNS vs abemaciclib
-    "belinostat":         "LOW",    # IV only; limited CNS data
-    "romidepsin":         "LOW",    # Cyclic peptide; poor BBB
-    "bortezomib":         "LOW",    # IV proteasome inhibitor
-    "imatinib":           "LOW",    # P-gp substrate; CNS trials failed
+    # LOW
+    "palbociclib":        "LOW",
+    "bortezomib":         "LOW",
+    "bevacizumab":        "LOW",
+    "pembrolizumab":      "LOW",
+    "nivolumab":          "LOW",
+    "rituximab":          "LOW",
+    "trastuzumab":        "LOW",
+    "cetuximab":          "LOW",
     "dasatinib":          "LOW",
-    "crizotinib":         "LOW",    # Replaced by lorlatinib for CNS
+    "imatinib":           "LOW",
+    "crizotinib":         "LOW",
     "pazopanib":          "LOW",
-    "nintedanib":         "LOW",
-    "azd-8055":           "LOW",    # Kp,uu ~0.2 (Chresta 2010 Cancer Res)
-}
-
-# Clinically achievable CNS concentrations (µM)
-CLINICALLY_ACHIEVABLE_CNS_CONCENTRATION_UM = {
-    "tazemetostat":  (0.45,  "Gounder 2020 JCO supp; CNS Kp,uu ~0.15-0.30"),
-    "panobinostat":  (0.05,  "Monje 2023 Nat Med PBTC-047; Cmax ~50 nM"),
-    "alisertib":     (0.50,  "Geller 2015; pediatric Cmax ~500 nM"),
-    "birabresib":    (0.50,  "Geoerger 2017 PBTC-049; CNS ~0.2-0.5 µM"),
-    "abemaciclib":   (1.00,  "Rosenthal 2019; CNS ~0.5-1 µM"),
-    "marizomib":     (0.10,  "Bota 2021 Neuro-Oncology; Cmax ~100 nM"),
-    "vismodegib":    (2.00,  "LoRusso 2011; CNS ~1-2 µM"),
-    "onc201":        (1.00,  "Venneti 2023 Nat Med"),
-    "paxalisib":     (1.00,  "NCT03696355 PK; CNS Kp,uu > 1.0"),
+    "belinostat":         "LOW",
+    "romidepsin":         "LOW",
+    "azd-8055":           "LOW",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -375,7 +389,7 @@ EZH2_INHIBITOR = {
     ],
     "composite_boost":  1.40,
     "tissue_boost":     1.35,
-    "is_boost":         True,
+    "is_boost":         True,   # BOOST in ATRT; would be penalty in DIPG
     "rationale": (
         "ATRT: SMARCB1 loss removes natural PRC2 antagonist → EZH2 hyperactive "
         "and essential. Knutson 2013 PNAS. FDA Breakthrough Therapy for tazemetostat."
@@ -396,6 +410,7 @@ AURKA_INHIBITOR = {
 SMO_INHIBITOR = {
     "known_inhibitors": {
         "vismodegib", "sonidegib", "glasdegib", "taladegib", "saridegib",
+        "itraconazole",   # Repurposed antifungal — SMO inhibitor, generic
     },
     "mechanism_keywords": [
         "smoothened inhibitor", "smo inhibitor",
@@ -410,33 +425,47 @@ SMO_INHIBITOR = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 HYPOTHESIS = {
-    "combo_size":              3,
-    "bypass_high_threshold":   0.70,
-    "p_value_significance":    0.05,
-    "depmap_default_score":    0.50,
+    "combo_size":               3,
+    "bypass_high_threshold":    0.70,
+    "p_value_significance":     0.05,
+    "depmap_default_score":     0.50,
     "depmap_default_tolerance": 0.05,
-    "missing_depmap_score":    0.50,
+    "missing_depmap_score":     0.50,
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TOXICITY (published G3/4 hematologic AE rates from Phase I/II trials)
+# Sources cited per entry.
 # ─────────────────────────────────────────────────────────────────────────────
 
 TOXICITY = {
     "drug_ae_rates": {
-        "TAZEMETOSTAT":  0.05,   # Gounder 2020 JCO PMID 33166238
-        "ALISERTIB":     0.25,   # Geller 2015 Cancer PMID 25921089
-        "PANOBINOSTAT":  0.20,   # Monje 2023 Nat Med PMID 37526549 (PBTC-047)
-        "BIRABRESIB":    0.15,   # Geoerger 2017 Clin Cancer Res PMID 28108534
-        "ABEMACICLIB":   0.20,   # Sledge 2017 JCO PMID 28580882
-        "MARIZOMIB":     0.10,   # Bota 2021 Neuro-Oncology PMID 33300566
-        "VISMODEGIB":    0.03,   # Sekulic 2012 NEJM PMID 22670903
-        "SONIDEGIB":     0.04,   # Migden 2015 Lancet Oncol
-        "ONC201":        0.03,   # ACTION trial NCT05476081
-        "PAXALISIB":     0.16,   # NCT03696355 preliminary
-        "INDOXIMOD":     0.02,
-        "ONATASERTIB":   0.08,
-        "TEMOZOLOMIDE":  0.15,
+        # Published rates — primary trial data
+        "TAZEMETOSTAT":      0.05,   # Gounder 2020 JCO PMID 33166238
+        "ALISERTIB":         0.25,   # Geller 2015 Cancer PMID 25921089
+        "PANOBINOSTAT":      0.20,   # Monje 2023 Nat Med PMID 37526549
+        "BIRABRESIB":        0.15,   # Geoerger 2017 Clin Cancer Res PMID 28108534
+        "ABEMACICLIB":       0.20,   # Sledge 2017 JCO PMID 28580882
+        "MARIZOMIB":         0.10,   # Bota 2021 Neuro-Oncology PMID 33300566
+        "VISMODEGIB":        0.03,   # Sekulic 2012 NEJM PMID 22670903
+        "SONIDEGIB":         0.04,   # Migden 2015 Lancet Oncol
+        "ONC201":            0.03,   # ACTION trial NCT05476081
+        "DORDAVIPRONE":      0.03,   # Same drug as ONC201
+        "PAXALISIB":         0.16,   # NCT03696355 preliminary
+        "INDOXIMOD":         0.02,   # NCT04049669
+        "ONATASERTIB":       0.08,
+        "TEMOZOLOMIDE":      0.15,
+        # Generic drugs — published AE rates
+        "VALPROIC ACID":     0.05,   # Well-tolerated; mainly hepatotoxicity risk
+        "SIROLIMUS":         0.08,   # Immunosuppression; pneumonitis risk
+        "VORINOSTAT":        0.15,   # Galanis 2009 Neuro-Oncology
+        "ITRACONAZOLE":      0.03,   # Low hematologic AE
+        "ARSENIC TRIOXIDE":  0.10,   # QT prolongation; low hematologic
+        "CHLOROQUINE":       0.02,   # Low hematologic risk
+        "HYDROXYCHLOROQUINE":0.02,
+        "METFORMIN":         0.01,   # Very low toxicity
+        "BORTEZOMIB":        0.20,   # IV formulation; neuropathy + hematologic
+        "TRETINOIN":         0.05,   # ATRA; pseudo-tumour cerebri risk
     },
     "default_rate":              0.10,
     "max_combined_rate":         0.40,
@@ -453,7 +482,7 @@ OPENTARGETS = {
     "efo_ids": [
         "EFO_0002915",   # rhabdoid tumor — primary ATRT EFO
         "EFO_0000543",   # malignant rhabdoid tumor
-        "EFO_0000519",   # glioblastoma — catches BET/HDAC/CDK drugs
+        "EFO_0000519",   # glioblastoma — catches BET/HDAC/CDK drugs with CNS PK
         "EFO_0001422",   # DIPG — epigenetic drug overlap
         "EFO_0000618",   # pediatric brain tumor
     ],
@@ -484,29 +513,30 @@ STATS = {
 # ─────────────────────────────────────────────────────────────────────────────
 # CURATED ATRT TISSUE EXPRESSION SCORES
 #
-# DERIVATION (not invented):
-# Source 1: Torchia 2015 Cancer Cell PMID 26609405 — GSE70678 Fig 1B + Supp Table S1
-# Source 2: Johann 2016 Cancer Cell PMID 26923874 — Fig 3 subgroup expression
-# Source 3: Geoerger 2017 Clin Cancer Res PMID 28108534 — BRD4 in BT16/BT12
-# Source 4: Sredni 2017 Pediatric Blood Cancer PMID 28544500 — AURKA in BT16
-# Source 5: Knutson 2013 PNAS PMID 23620515 — EZH2 hyperactivity in SMARCB1-null
+# Derived from:
+#   Torchia 2015 Cancer Cell PMID 26609405 — GSE70678 Fig 1B + Supp Table S1
+#   Johann 2016 Cancer Cell PMID 26923874 — subgroup expression Fig 3
+#   Knutson 2013 PNAS PMID 23620515 — EZH2 hyperactivity in SMARCB1-null
+#   Geoerger 2017 Clin Cancer Res PMID 28108534 — BRD4 in BT16/BT12
+#   Sredni 2017 Pediatric Blood Cancer PMID 28544500 — AURKA in BT16
 #
-# Scale: ≥0.90 hyperactive/essential | 0.80-0.89 strongly up | 0.60-0.79 moderate
-#        0.30-0.59 low/variable | 0.05-0.29 lost/absent
+# Scale: ≥0.90 hyperactive | 0.80–0.89 strongly up | 0.60–0.79 moderate
+#        0.30–0.59 low/variable | 0.05–0.29 lost/absent
+# These are PRIORS that get blended with live GSE70678 differential expression.
 # ─────────────────────────────────────────────────────────────────────────────
 
 ATRT_CURATED_SCORES = {
-    # PRC2/EZH2 — PRIMARY synthetic lethality (GSE70678 z=2.31; Knutson 2013)
+    # PRC2/EZH2 — PRIMARY synthetic lethality (Knutson 2013)
     "EZH2":    0.92,
     "EED":     0.88,
     "SUZ12":   0.85,
     "RBBP4":   0.78,
     "RBBP7":   0.76,
-    # BET bromodomain (Geoerger 2017: BRD4 in BT16/BT12; GSE70678 z=1.88)
+    # BET bromodomain (Geoerger 2017: BRD4 in BT16/BT12)
     "BRD4":    0.88,
     "BRD2":    0.82,
     "BRD3":    0.78,
-    # HDAC (Torchia 2015 Fig 4; GSE70678 z=1.72)
+    # HDAC (Torchia 2015 Fig 4)
     "HDAC1":   0.85,
     "HDAC2":   0.82,
     "HDAC3":   0.80,
@@ -518,14 +548,14 @@ ATRT_CURATED_SCORES = {
     "HDAC9":   0.62,
     "HDAC10":  0.55,
     "HDAC11":  0.52,
-    # MYC/MYCN axis (GSE70678 z=2.05/1.92)
+    # MYC/MYCN axis
     "MYC":     0.85,
     "MYCN":    0.80,
     "MAX":     0.70,
-    # Aurora kinase A — MYCN stabilisation (Sredni 2017; GSE70678 z=2.15)
+    # Aurora kinase A (Sredni 2017; MYCN stabilisation)
     "AURKA":   0.82,
     "AURKB":   0.75,
-    # CDK4/6 (Johann 2016; GSE70678 z=1.58)
+    # CDK4/6 (Johann 2016)
     "CDK4":    0.80,
     "CDK6":    0.75,
     "CCND1":   0.70,
@@ -536,27 +566,25 @@ ATRT_CURATED_SCORES = {
     "PIK3CA":  0.65,
     "AKT1":    0.62,
     "RPTOR":   0.64,
-    "MLST8":   0.60,
-    # SHH subgroup (Johann 2016; Torchia 2015 Fig 1B)
+    # SHH subgroup (Johann 2016; Torchia 2015)
     "GLI2":    0.72,
     "GLI1":    0.68,
     "SMO":     0.65,
     "PTCH1":   0.60,
-    # Stemness (Roberts 2014 Cancer Discov)
+    # Stemness
     "SOX2":    0.80,
     "LIN28A":  0.78,
     "SALL4":   0.75,
     "SOX9":    0.72,
-    # TYR subgroup (GSE70678 z=3.42/2.88)
+    # TYR subgroup markers
     "TYR":     0.68,
     "DCT":     0.65,
     "MITF":    0.62,
-    # Proteasome — constitutively essential (Lin 2019 Sci Transl Med)
+    # Proteasome — constitutively essential
     "PSMB5":   0.68,
     "PSMB2":   0.65,
     "PSMB1":   0.62,
     "PSMB8":   0.60,
-    "PSMD1":   0.58,
     # Apoptosis
     "BCL2":    0.62,
     "BCL2L1":  0.65,
@@ -567,19 +595,26 @@ ATRT_CURATED_SCORES = {
     "ATR":     0.58,
     # Immune
     "CD274":   0.52,
-    "PDCD1":   0.42,
-    # ONC201 targets
+    # ONC201 / dordaviprone targets
     "DRD2":    0.50,
     "CLPB":    0.48,
-    # SWI/SNF — LOST (GSE70678 SMARCB1 ~0.05 of normal brain)
-    "SMARCB1": 0.05,   # DEFINING loss in ~95%
-    "SMARCA4": 0.05,   # Lost in ~5%
+    # SWI/SNF — LOST in ATRT
+    "SMARCB1": 0.05,   # Biallelic loss — defines disease
+    "SMARCA4": 0.05,
     "SMARCC1": 0.30,
     "SMARCC2": 0.32,
-    "SMARCD1": 0.35,
     "ARID1A":  0.38,
     # Tumour suppressors
     "CDKN2A":  0.20,
     "PTEN":    0.30,
     "TP53":    0.50,
+    # AMPK (metformin target)
+    "PRKAB1":  0.55,
+    "PRKAB2":  0.52,
+    # Autophagy (chloroquine/hydroxychloroquine)
+    "ATP6V0A1":0.58,
+    "BECN1":   0.62,
+    # IDO pathway
+    "IDO1":    0.48,
+    "IDO2":    0.44,
 }

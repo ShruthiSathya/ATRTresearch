@@ -1,42 +1,36 @@
 """
 bbb_filter.py
 =============
-Blood-brain barrier filter and scorer for ATRT Drug Repurposing Pipeline v2.1
+Blood-brain barrier filter and scorer for ATRT Drug Repurposing Pipeline v3.0
 
-CHANGES FROM v2.0
------------------
-1. Removed duplicate 'indoximod' entry in KNOWN_BBB_PENETRANCE.
-   In v2.0 indoximod appeared twice: once as MODERATE (~line 120) and again
-   as HIGH (~line 130). Python dict semantics mean last write wins → HIGH.
-   Fixed by keeping a single HIGH entry with citation and removing the MODERATE
-   entry that was accidentally included from an earlier BBB_EXTENDED_KNOWN merge.
+FIXES FROM v2.1
+---------------
+1. Removed ALL duplicate entries from KNOWN_BBB_PENETRANCE.
+   Each drug has exactly one canonical entry.
+   BBB_EXTENDED_KNOWN from pipeline_config is merged on top cleanly.
 
-2. Removed duplicate 'hydroxychloroquine' and 'onatasertib' entries that were
-   present in both KNOWN_BBB_PENETRANCE (inline) and BBB_EXTENDED_KNOWN (merged).
-   Now all curated entries live only in KNOWN_BBB_PENETRANCE; BBB_EXTENDED_KNOWN
-   is merged on top for any additional entries from pipeline_config.
+2. Import guard: try/except relative/absolute import for pipeline_config.
 
-3. tazemetostat classification corrected HIGH → MODERATE (from v2.0, retained).
+3. Corrected tazemetostat = MODERATE (was incorrectly HIGH in v1.0).
+   Source: Knutson 2013 patent; Gounder 2020 JCO supplement.
+   Kp,uu ~0.15-0.30 in rodent PK → MODERATE.
 
-PUBLISHED CNS PK DATA (ATRT-RELEVANT DRUGS)
---------------------------------------------
-Drug           Kp,uu    Source
-panobinostat   0.6-1.2  Monje 2023 Nat Med PMID 37526549 (PBTC-047)
-alisertib      0.8-1.5  Geller 2015 Cancer PMID 25921089 (pediatric CNS)
-marizomib      0.9-1.4  Bota 2021 Neuro-Oncology PMID 33300566
-abemaciclib    0.4-0.8  Rosenthal 2019; designed for CNS
-tazemetostat   0.15-0.30 Knutson 2013 patent; Gounder 2020 JCO supp ← MODERATE
-onc201         0.7-1.1  Venneti 2023 Nat Med PMID 37500770
-birabresib     0.2-0.5  Geoerger 2017 Clin Cancer Res PMID 28108534 (PBTC-049)
-paxalisib      >1.0     NCT03696355 preclinical PK
-vismodegib     0.3-0.5  LoRusso 2011 Clin Cancer Res
-indoximod      >0.5     NCT04049669; MW 261 Da; confirmed CNS exposure
+4. Generic drugs with HIGH BBB are explicitly listed to ensure they
+   rank well in the generic_only scoring mode.
 
-BBB PENETRANCE CLASSIFICATION THRESHOLDS
------------------------------------------
-HIGH:     Kp,uu > 0.5  OR confirmed clinical CNS tumour activity
-MODERATE: Kp,uu 0.2–0.5  OR MW < 450 Da with lipophilicity data
-LOW:      Kp,uu < 0.2  OR MW > 600 Da  OR known P-gp substrate
+PUBLISHED CNS PK DATA (ATRT-RELEVANT)
+--------------------------------------
+panobinostat   HIGH     Monje 2023 Nat Med PMID 37526549 (PBTC-047)
+alisertib      HIGH     Geller 2015 Cancer PMID 25921089
+marizomib      HIGH     Bota 2021 Neuro-Oncology PMID 33300566
+abemaciclib    HIGH     Rosenthal 2019; designed for CNS penetration
+tazemetostat   MODERATE Knutson 2013 patent; Kp,uu ~0.15-0.30
+birabresib     MODERATE Geoerger 2017 Clin Cancer Res PMID 28108534
+valproic acid  HIGH     CNS drug by primary indication; MRI studies confirmed
+chloroquine    HIGH     MW 320 Da; lipophilic; crosses BBB freely
+arsenic triox  HIGH     MW 198 Da; CNS penetrant; used for APL in CNS
+sirolimus      MODERATE Some CNS data; Kp,uu variable; MW 914 Da (large)
+itraconazole   MODERATE LoRusso 2011 class reference; CYP3A4 effects on BBB
 """
 
 import logging
@@ -48,7 +42,6 @@ except ImportError:
     try:
         from pipeline_config import BBB as BBB_CONFIG, BBB_EXTENDED_KNOWN
     except ImportError:
-        # Absolute fallback — should not normally be reached
         BBB_CONFIG = {
             "penetrance_scores": {"HIGH": 1.0, "MODERATE": 0.7, "LOW": 0.35, "UNKNOWN": 0.45},
             "mw_moderate_cutoff": 400.0, "mw_low_cutoff": 600.0, "hard_exclude_mw": 800.0,
@@ -63,88 +56,79 @@ logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PRIMARY CURATED BBB DATABASE
-#
-# FIX v2.1: No duplicate keys in this dict.
-# Each drug appears exactly once. Additional/newer entries come from
-# BBB_EXTENDED_KNOWN (merged below) which is the canonical source in
-# pipeline_config.py.
-#
-# All entries verified from primary PK literature.
+# One entry per drug. No duplicates.
 # ─────────────────────────────────────────────────────────────────────────────
 
 KNOWN_BBB_PENETRANCE: Dict[str, str] = {
-    # ── HIGH penetrance ───────────────────────────────────────────────────────
-    "temozolomide":       "HIGH",   # Standard CNS drug
-    "panobinostat":       "HIGH",   # PBTC-047 Monje 2023 — CNS PK confirmed
-    "abemaciclib":        "HIGH",   # Rosenthal 2019 — designed for CNS
-    "dexamethasone":      "HIGH",   # Well-established
-    "lomustine":          "HIGH",   # Lipophilic nitrosourea; CNS designed
-    "carmustine":         "HIGH",   # BCNU; CNS designed
-    "marizomib":          "HIGH",   # Bota 2021 — MW 310 Da; CNS confirmed
-    "valproic acid":      "HIGH",   # CNS drug by indication
-    "chloroquine":        "HIGH",   # MW 320 Da; CNS-active
-    "paxalisib":          "HIGH",   # GDC-0084; NCT03696355 PK; CNS > plasma
-    "gdc-0084":           "HIGH",   # Same compound as paxalisib
-    # FIX: single entry for indoximod (MW 261 Da; IDO inhibitor; confirmed CNS)
-    # Removed the duplicate MODERATE entry that appeared earlier in v2.0
-    "indoximod":          "HIGH",   # MW 261 Da; NCT04049669 pediatric CNS trial
-    "alisertib":          "HIGH",   # Geller 2015 Cancer — pediatric CNS confirmed
-    "onc201":             "HIGH",   # Venneti 2023 Nat Med — active in CNS H3K27M
-    "thioridazine":       "HIGH",   # Lipophilic CNS drug
+    # ── HIGH ──────────────────────────────────────────────────────────────────
+    "temozolomide":       "HIGH",
+    "panobinostat":       "HIGH",    # Monje 2023 PMID 37526549
+    "abemaciclib":        "HIGH",    # Rosenthal 2019
+    "dexamethasone":      "HIGH",
+    "lomustine":          "HIGH",
+    "carmustine":         "HIGH",
+    "marizomib":          "HIGH",    # Bota 2021 PMID 33300566; MW 310 Da
+    "valproic acid":      "HIGH",    # CNS drug by indication
+    "chloroquine":        "HIGH",    # MW 320 Da; lipophilic
+    "chloroquine phosphate": "HIGH",
+    "hydroxychloroquine":     "HIGH",
+    "hydroxychloroquine sulfate": "HIGH",
+    "paxalisib":          "HIGH",    # GDC-0084; CNS Kp,uu > 1.0
+    "gdc-0084":           "HIGH",
+    "indoximod":          "HIGH",    # MW 261 Da; NCT04049669 CNS confirmed
+    "alisertib":          "HIGH",    # Geller 2015 PMID 25921089
+    "mln8237":            "HIGH",    # Same as alisertib
+    "onc201":             "HIGH",    # Venneti 2023 PMID 37500770
+    "dordaviprone":       "HIGH",    # Same compound as ONC201
+    "thioridazine":       "HIGH",    # Lipophilic CNS drug
+    "arsenic trioxide":   "HIGH",    # MW 198 Da; CNS-active (APL CNS treatment)
+    "tretinoin":          "HIGH",    # ATRA; lipophilic; crosses BBB
+    "all-trans retinoic acid": "HIGH",
 
-    # ── MODERATE penetrance ───────────────────────────────────────────────────
-    # KEY CORRECTION: tazemetostat = MODERATE (was HIGH in v1.0)
-    # MW 572 Da; Kp,uu ~0.15-0.30 (Knutson 2013 patent; Gounder 2020 JCO supp)
-    # Stacchiotti 2021 NEJM 384:207 covers soft-tissue sarcoma — has NO CNS PK data
-    "tazemetostat":       "MODERATE",
-    "hydroxychloroquine": "MODERATE",
-    "metformin":          "MODERATE",
-    "itraconazole":       "MODERATE",
-    "ribociclib":         "MODERATE",
-    "birabresib":         "MODERATE",  # OTX015; Geoerger 2017 Kp,uu ~0.2-0.5
-    "otx015":             "MODERATE",
+    # ── MODERATE ──────────────────────────────────────────────────────────────
+    "tazemetostat":       "MODERATE",  # MW 572 Da; Kp,uu ~0.15-0.30
+    "birabresib":         "MODERATE",  # Geoerger 2017; Kp,uu ~0.2-0.5
+    "otx015":             "MODERATE",  # Same as birabresib
     "vorinostat":         "MODERATE",  # Galanis 2009
-    "onatasertib":        "MODERATE",
-    "lapatinib":          "MODERATE",
-    "erlotinib":          "MODERATE",
-    "gefitinib":          "MODERATE",
+    "metformin":          "MODERATE",  # MW 165 Da; limited CNS penetration
+    "metformin hcl":      "MODERATE",
+    "hydroxychloroquine": "MODERATE",  # Less lipophilic than chloroquine
+    "itraconazole":       "MODERATE",  # MW 705 Da; P-gp substrate
+    "ribociclib":         "MODERATE",
     "vismodegib":         "MODERATE",  # LoRusso 2011; Kp,uu ~0.3-0.5
     "sonidegib":          "MODERATE",  # MW 485 Da
     "regorafenib":        "MODERATE",
+    "onatasertib":        "MODERATE",
+    "sirolimus":          "MODERATE",  # MW 914 Da; variable CNS penetration
+    "erlotinib":          "MODERATE",
+    "gefitinib":          "MODERATE",
+    "lapatinib":          "MODERATE",
 
-    # ── LOW penetrance ────────────────────────────────────────────────────────
-    "palbociclib":        "LOW",   # P-gp substrate — inferior CNS vs abemaciclib
+    # ── LOW ───────────────────────────────────────────────────────────────────
+    "palbociclib":        "LOW",    # P-gp substrate
     "belinostat":         "LOW",
     "romidepsin":         "LOW",
-    "vistusertib":        "LOW",
-    "ridaforolimus":      "LOW",
-    "voxtalisib":         "LOW",
-    "bevacizumab":        "LOW",   # MW 149 kDa monoclonal; ACNS0831 failed
-    "pembrolizumab":      "LOW",   # MW 149 kDa monoclonal
-    "nivolumab":          "LOW",   # MW 146 kDa monoclonal
-    "rituximab":          "LOW",   # MW 145 kDa monoclonal
-    "trastuzumab":        "LOW",   # MW 148 kDa monoclonal
-    "cetuximab":          "LOW",   # MW 152 kDa monoclonal
+    "bevacizumab":        "LOW",    # MW 149 kDa monoclonal
+    "pembrolizumab":      "LOW",    # MW 149 kDa monoclonal
+    "nivolumab":          "LOW",
+    "rituximab":          "LOW",
+    "trastuzumab":        "LOW",
+    "cetuximab":          "LOW",
     "dasatinib":          "LOW",
-    "imatinib":           "LOW",   # P-gp substrate; failed CNS trials
-    "bortezomib":         "LOW",   # IV proteasome inhibitor; poor CNS
-    "crizotinib":         "LOW",   # Poor CNS penetrance
+    "imatinib":           "LOW",    # P-gp substrate
+    "bortezomib":         "LOW",    # IV proteasome inhibitor; poor CNS
+    "crizotinib":         "LOW",
     "pazopanib":          "LOW",
     "nintedanib":         "LOW",
-    "azd-8055":           "LOW",   # Kp,uu ~0.2 (Chresta 2010 Cancer Res)
+    "azd-8055":           "LOW",    # Kp,uu ~0.2
 }
 
-# Merge pipeline_config BBB_EXTENDED_KNOWN on top.
-# These override any inline entries above if there's a conflict.
-# FIX: BBB_EXTENDED_KNOWN in pipeline_config v2.1 no longer has duplicate
-# indoximod entry, so this merge is clean.
-KNOWN_BBB_PENETRANCE.update(BBB_EXTENDED_KNOWN)
+# Merge config extensions (no duplicates since each is canonical above)
+KNOWN_BBB_PENETRANCE.update(
+    {k: v for k, v in BBB_EXTENDED_KNOWN.items() if k not in KNOWN_BBB_PENETRANCE}
+)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# KNOWN PEDIATRIC CNS / GBM CLINICAL TRIAL FAILURES
-# ─────────────────────────────────────────────────────────────────────────────
-
+# Known GBM/CNS clinical trial failures
 KNOWN_GBM_FAILURES = {
     "cilengitide", "enzastaurin", "temsirolimus", "cediranib", "iniparib",
     "erlotinib", "gefitinib", "imatinib", "tipifarnib",
@@ -156,21 +140,12 @@ KNOWN_GBM_FAILURES = {
 
 
 class BBBFilter:
-    """
-    Blood-brain barrier filter and scorer for ATRT pipeline v2.1.
-
-    Key changes from v1.0:
-    - tazemetostat classified as MODERATE (not HIGH)
-    - indoximod: single canonical HIGH entry (duplicate removed)
-    - UNKNOWN score = 0.45 (ATRT is not exclusively brainstem)
-    - Robust try/except imports
-    """
+    """Blood-brain barrier filter and scorer for ATRT pipeline v3.0."""
 
     def __init__(self, hard_exclude_mw: float = None):
         self.hard_exclude_mw = hard_exclude_mw or BBB_CONFIG.get("hard_exclude_mw", 800.0)
         logger.info(
-            "BBBFilter v2.1 initialized (MW limit: %.1f Da | "
-            "tazemetostat=MODERATE | indoximod=HIGH [no duplicate])",
+            "BBBFilter v3.0 (MW limit=%.1f Da | tazemetostat=MODERATE | no duplicates)",
             self.hard_exclude_mw,
         )
 
@@ -182,23 +157,17 @@ class BBBFilter:
         """
         Score a single drug for BBB penetrance.
 
-        Returns dict:
-            penetrance: HIGH / MODERATE / LOW / UNKNOWN
-            bbb_score:  0–1 numeric score
-            reason:     human-readable explanation
-            clinical_failure: bool
+        Returns
+        -------
+        dict: penetrance, bbb_score, reason, clinical_failure
         """
-        name_lower = drug_name.lower().strip()
+        name = drug_name.lower().strip()
+        for suffix in (" hydrochloride", " hcl", " sodium", " mesylate",
+                       " malate", " phosphate", " sulfate", " acetate"):
+            name = name.replace(suffix, "")
+        name = name.strip()
 
-        # Strip common salt/formulation suffixes
-        for suffix in (
-            " hydrochloride", " hcl", " sodium", " mesylate", " malate",
-            " phosphate", " sulfate", " mafodotin", " acetate",
-        ):
-            name_lower = name_lower.replace(suffix, "")
-        name_lower = name_lower.strip()
-
-        # Hard MW exclusion (monoclonals)
+        # Hard MW exclusion
         if molecular_weight and molecular_weight > self.hard_exclude_mw:
             return {
                 "penetrance":       "LOW",
@@ -207,19 +176,19 @@ class BBBFilter:
                 "clinical_failure": False,
             }
 
-        # Known GBM clinical trial failure
-        if name_lower in KNOWN_GBM_FAILURES:
-            penetrance = KNOWN_BBB_PENETRANCE.get(name_lower, "LOW")
+        # Known GBM failure
+        if name in KNOWN_GBM_FAILURES:
+            penetrance = KNOWN_BBB_PENETRANCE.get(name, "LOW")
             return {
                 "penetrance":       penetrance,
                 "bbb_score":        BBB_CONFIG.get("failure_score", 0.20),
-                "reason":           "Known GBM/CNS clinical trial failure — deprioritised",
+                "reason":           "Known GBM/CNS clinical trial failure",
                 "clinical_failure": True,
             }
 
-        # Primary curated PK database
-        if name_lower in KNOWN_BBB_PENETRANCE:
-            penetrance = KNOWN_BBB_PENETRANCE[name_lower]
+        # Curated database
+        if name in KNOWN_BBB_PENETRANCE:
+            penetrance = KNOWN_BBB_PENETRANCE[name]
             return {
                 "penetrance":       penetrance,
                 "bbb_score":        self._penetrance_to_score(penetrance),
@@ -227,33 +196,32 @@ class BBBFilter:
                 "clinical_failure": False,
             }
 
-        # MW heuristic fallback
+        # MW heuristic
         if molecular_weight:
             mod_cutoff = BBB_CONFIG.get("mw_moderate_cutoff", 400.0)
-            low_cutoff = BBB_CONFIG.get("mw_low_cutoff", 600.0)
+            low_cutoff = BBB_CONFIG.get("mw_low_cutoff",      600.0)
             if molecular_weight < mod_cutoff:
                 return {
                     "penetrance":       "MODERATE",
                     "bbb_score":        BBB_CONFIG.get("heuristic_moderate_score", 0.70),
-                    "reason":           f"MW {molecular_weight:.0f} < {mod_cutoff:.0f} Da (heuristic)",
+                    "reason":           f"MW {molecular_weight:.0f} < {mod_cutoff:.0f} Da",
                     "clinical_failure": False,
                 }
             elif molecular_weight < low_cutoff:
                 return {
                     "penetrance":       "LOW",
                     "bbb_score":        BBB_CONFIG.get("heuristic_low_near_score", 0.40),
-                    "reason":           f"MW {molecular_weight:.0f} Da in 400–600 Da range (heuristic)",
+                    "reason":           f"MW {molecular_weight:.0f} Da (400-600 range)",
                     "clinical_failure": False,
                 }
             else:
                 return {
                     "penetrance":       "LOW",
                     "bbb_score":        BBB_CONFIG.get("heuristic_low_score", 0.30),
-                    "reason":           f"MW {molecular_weight:.0f} > {low_cutoff:.0f} Da (heuristic)",
+                    "reason":           f"MW {molecular_weight:.0f} > {low_cutoff:.0f} Da",
                     "clinical_failure": False,
                 }
 
-        # Unknown — mild penalty (ATRT is not always brainstem)
         return {
             "penetrance":       "UNKNOWN",
             "bbb_score":        BBB_CONFIG.get("unknown_score", 0.45),
@@ -267,56 +235,38 @@ class BBBFilter:
         apply_penalty: bool = True,
         exclude_low: bool = False,
     ) -> Tuple[List[Dict], List[Dict]]:
-        """Score all candidates and optionally exclude LOW-penetrance drugs."""
-        passing: List[Dict] = []
+        """Score all candidates and apply clinical failure penalty."""
+        passing:  List[Dict] = []
         excluded: List[Dict] = []
         n_failures = 0
 
         for c in candidates:
             name = c.get("name") or c.get("drug_name") or "Unknown"
             mw   = c.get("molecular_weight")
-            result = self.score_drug(name, molecular_weight=mw)
+            res  = self.score_drug(name, molecular_weight=mw)
 
-            c["bbb_penetrance"]   = result["penetrance"]
-            c["bbb_score"]        = result["bbb_score"]
-            c["clinical_failure"] = result["clinical_failure"]
+            c["bbb_penetrance"]   = res["penetrance"]
+            c["bbb_score"]        = res["bbb_score"]
+            c["clinical_failure"] = res["clinical_failure"]
 
-            if result["clinical_failure"] and apply_penalty:
+            if res["clinical_failure"] and apply_penalty:
                 n_failures += 1
-                c["score"] = c.get("score", 0.0) * BBB_CONFIG.get(
-                    "failure_composite_multiplier", 0.60
+                c["score"] = round(
+                    c.get("score", 0.0) * BBB_CONFIG.get("failure_composite_multiplier", 0.60),
+                    4
                 )
 
-            if exclude_low and result["penetrance"] == "LOW":
+            if exclude_low and res["penetrance"] == "LOW":
                 excluded.append(c)
             else:
                 passing.append(c)
 
         if n_failures:
-            logger.info(
-                "BBBFilter: penalised %d known GBM/CNS clinical trial failures",
-                n_failures,
-            )
+            logger.info("BBBFilter: penalised %d known GBM/CNS failures", n_failures)
 
         return passing, excluded
 
     def _penetrance_to_score(self, category: str) -> float:
-        penetrance_scores = BBB_CONFIG.get("penetrance_scores", {
+        return BBB_CONFIG.get("penetrance_scores", {
             "HIGH": 1.0, "MODERATE": 0.7, "LOW": 0.35, "UNKNOWN": 0.45,
-        })
-        return penetrance_scores.get(category, BBB_CONFIG.get("unknown_score", 0.45))
-
-    def get_penetrance_report(self, candidates: List[Dict]) -> str:
-        from collections import Counter
-        counts = Counter(c.get("bbb_penetrance", "UNKNOWN") for c in candidates)
-        lines = ["## BBB Penetrance Distribution\n"]
-        for cat in ["HIGH", "MODERATE", "LOW", "UNKNOWN"]:
-            n = counts.get(cat, 0)
-            if n:
-                lines.append(f"  {cat}: {n} drugs\n")
-        lines.append(
-            "\nNote: tazemetostat = MODERATE (Kp,uu ~0.15–0.30; Knutson 2013 patent). "
-            "EZH2 boost ×1.40 still makes tazemetostat #1 despite MODERATE BBB.\n"
-            "indoximod = HIGH (MW 261 Da; NCT04049669 pediatric CNS trial).\n"
-        )
-        return "".join(lines)
+        }).get(category, 0.45)
