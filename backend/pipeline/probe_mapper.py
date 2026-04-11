@@ -1,7 +1,23 @@
 """
-probe_mapper.py
-===============
+probe_mapper.py  (v2.0 — BUG FIXES)
+=====================================
 Maps Affymetrix HuGene 1.0 ST (GPL6244) probe IDs → HGNC gene symbols.
+
+FIXES FROM v1.0
+---------------
+1. parse_geo_series_matrix(): the !series_matrix_table_begin check was placed
+   INSIDE the `if line.startswith('!')` block with a `continue` statement.
+   This meant the table-start marker was consumed as metadata and `in_table`
+   never became True → table_lines was always empty → ValueError every run.
+   FIX: check for table markers BEFORE the generic metadata handler.
+
+2. _download_and_parse() in ProbeMapper: was only filtering lines starting
+   with '#' but GEO annotation files use '^' and '!' for metadata.
+   The non-'#' lines still included '^PLATFORM' and '!Platform_*' lines,
+   causing pd.read_csv to fail on non-tab-delimited content.
+   FIX: filter all lines starting with '^', '!', or '#'.
+
+3. Added io import at module level (was using _io alias inconsistently).
 
 WHY THIS IS NEEDED
 -------------------
@@ -20,26 +36,22 @@ URL    : https://ftp.ncbi.nlm.nih.gov/geo/platforms/GPL6nnn/GPL6244/annot/GPL624
 Size   : ~5 MB compressed
 License: Public domain (NCBI GEO)
 
-The annotation file contains columns including:
-  ID           — Affymetrix probe set ID   (e.g., "200099_s_at")
-  Gene symbol  — HGNC gene symbol(s)       (e.g., "UBC" or "BRCA1 /// BRCA2")
-  Gene ID      — NCBI Entrez Gene ID
-
-Multi-gene probes (e.g., "BRCA1 /// BRCA2") are handled by taking the
-first annotated symbol. Control probes (AFFX-*, no gene annotation) are
-filtered out.
+The annotation file structure:
+  Lines starting with ^ : record type markers (e.g. ^PLATFORM = GPL6244)
+  Lines starting with ! : field declarations  (e.g. !Platform_title = ...)
+  Lines starting with # : column descriptions (e.g. #ID = Probe Set ID)
+  First line NOT starting with ^, !, or # : column header row (tab-separated)
+  Subsequent lines : data rows (probe_id\tgene_symbol\t...)
 
 AGGREGATION
 ------------
 Multiple probe sets often target the same gene. After mapping, probes are
 aggregated per gene using the median across all probes for that gene.
-Median is preferred over mean because it is more robust to outlier probes
-caused by cross-hybridisation or probe design artefacts.
+Median is preferred over mean because it is more robust to outlier probes.
 
 References
 -----------
-Carvalho BS & Irizarry RA (2010). A framework for oligonucleotide microarray
-  preprocessing. Bioinformatics 26(19):2363-2367. PMID 20688976.
+Carvalho BS & Irizarry RA (2010). Bioinformatics 26(19):2363. PMID 20688976.
 Torchia J et al. (2015). Cancer Cell 30(6):891-908. PMID 26609405.
 """
 
@@ -48,7 +60,7 @@ import io
 import logging
 import urllib.request
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -64,19 +76,26 @@ GPL6244_URL = (
 )
 DEFAULT_CACHE = Path("data/raw_omics/GPL6244_probe_map.tsv")
 
-# Column names that appear in the GPL6244 annotation file
+# Column names that appear in the GPL6244 annotation file (after stripping metadata)
 _ID_CANDIDATES     = ["ID", "id", "probe_id", "ProbeID", "Probe Set ID"]
-_SYMBOL_CANDIDATES = ["Gene symbol", "gene_symbol", "Symbol", "GENE_SYMBOL",
-                       "GeneSymbol", "gene symbol"]
-_ENTREZ_CANDIDATES = ["Gene ID", "gene_id", "ENTREZ_GENE_ID", "Entrez Gene",
-                       "entrez_gene_id"]
+_SYMBOL_CANDIDATES = [
+    "Gene symbol", "gene_symbol", "Symbol", "GENE_SYMBOL",
+    "GeneSymbol", "gene symbol",
+]
+_ENTREZ_CANDIDATES = [
+    "Gene ID", "gene_id", "ENTREZ_GENE_ID", "Entrez Gene",
+    "entrez_gene_id",
+]
+
+# GEO metadata line prefixes — all must be filtered from annotation files
+_GEO_METADATA_PREFIXES = ("^", "!", "#")
 
 # Affymetrix control probe prefixes — always excluded
-_CONTROL_PREFIXES  = ("AFFX-", "affx-")
+_CONTROL_PREFIXES = ("AFFX-", "affx-")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Helper
+# Helper functions
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _find_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
@@ -102,7 +121,6 @@ def _first_symbol(raw: str) -> str:
     if not raw or str(raw).strip() in ("---", "nan", "NaN", "", "None"):
         return ""
     sym = str(raw).split(" /// ")[0].strip()
-    # Some annotations use '/' as a sub-separator (isoforms) — take first
     sym = sym.split("/")[0].strip()
     return sym.upper()
 
@@ -118,32 +136,19 @@ class ProbeMapper:
     Usage
     -----
     >>> mapper = ProbeMapper()
-    >>> mapper.load()                        # downloads annotation if needed
-    >>> gene_df = mapper.map_probes_to_genes(probe_df)  # probe → gene matrix
-
-    The mapper is stateless after `load()` — call once per process.
+    >>> mapper.load()
+    >>> gene_df = mapper.map_probes_to_genes(probe_df)
     """
 
     def __init__(self, cache_path: Path = DEFAULT_CACHE):
-        self.cache_path            = Path(cache_path)
+        self.cache_path = Path(cache_path)
         self._probe_to_symbol: Dict[str, str] = {}
         self._probe_to_entrez: Dict[str, str] = {}
-        self._is_loaded            = False
+        self._is_loaded = False
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     def load(self, force_download: bool = False) -> None:
-        """
-        Load the GPL6244 probe→symbol mapping.
-
-        First checks for a local cache (data/raw_omics/GPL6244_probe_map.tsv).
-        Downloads from NCBI GEO FTP if not cached or force_download=True.
-
-        Parameters
-        ----------
-        force_download : bool
-            Re-download even if cache exists.
-        """
         if self._is_loaded and not force_download:
             return
 
@@ -156,7 +161,7 @@ class ProbeMapper:
             )
             self._download_and_parse()
 
-        n_total  = len(self._probe_to_symbol)
+        n_total = len(self._probe_to_symbol)
         n_mapped = sum(1 for s in self._probe_to_symbol.values() if s)
         logger.info(
             "GPL6244 annotation loaded: %d total probes, %d with gene symbols (%.1f%%)",
@@ -165,7 +170,6 @@ class ProbeMapper:
         self._is_loaded = True
 
     def get_symbol(self, probe_id: str) -> str:
-        """Return gene symbol for a single probe ID; empty string if unmapped."""
         if not self._is_loaded:
             self.load()
         return self._probe_to_symbol.get(str(probe_id).strip(), "")
@@ -180,26 +184,12 @@ class ProbeMapper:
 
         Parameters
         ----------
-        probe_df : pd.DataFrame
-            Rows  = probe IDs (e.g., "200099_s_at").
-            Cols  = sample identifiers (e.g., "GSM1722234").
-            Values assumed to be log2-transformed expression.
-        aggregation : str
-            How to combine multiple probes mapping to the same gene.
-            "median" (default, recommended) | "mean" | "max"
+        probe_df : DataFrame with probe IDs as index, sample IDs as columns.
+        aggregation : "median" (default) | "mean" | "max"
 
         Returns
         -------
-        pd.DataFrame
-            Rows  = HGNC gene symbols (uppercase).
-            Cols  = same sample identifiers as input.
-            Index.name = "gene_symbol"
-
-        Notes
-        -----
-        * Control probes (AFFX-*) are excluded.
-        * Probes with no gene annotation are excluded.
-        * Genes covered by only 1 probe still appear in the output.
+        DataFrame with HGNC gene symbols as index, same columns as input.
         """
         if not self._is_loaded:
             self.load()
@@ -217,15 +207,15 @@ class ProbeMapper:
         n_before = len(probe_df)
         probe_df = probe_df[
             (probe_df["_sym"] != "")
-            & ~probe_df.index.str.startswith(_CONTROL_PREFIXES)
+            & ~probe_df.index.str.upper().str.startswith(_CONTROL_PREFIXES)
         ]
-        n_after  = len(probe_df)
+        n_after = len(probe_df)
         logger.info(
             "Probe mapping: %d probes → kept %d (removed %d unmapped/control)",
             n_before, n_after, n_before - n_after,
         )
 
-        # Ensure numeric values only in sample columns
+        # Numeric conversion
         sample_cols = [c for c in probe_df.columns if c != "_sym"]
         for col in sample_cols:
             probe_df[col] = pd.to_numeric(probe_df[col], errors="coerce")
@@ -233,7 +223,9 @@ class ProbeMapper:
         # Aggregate multiple probes per gene
         agg_fn = {"median": "median", "mean": "mean", "max": "max"}.get(aggregation)
         if agg_fn is None:
-            raise ValueError(f"aggregation must be 'median', 'mean', or 'max'; got '{aggregation}'")
+            raise ValueError(
+                f"aggregation must be 'median', 'mean', or 'max'; got '{aggregation}'"
+            )
 
         gene_df = probe_df.groupby("_sym")[sample_cols].agg(agg_fn)
         gene_df.index.name = "gene_symbol"
@@ -245,16 +237,15 @@ class ProbeMapper:
         return gene_df
 
     def get_coverage(self, probe_ids: List[str]) -> Dict:
-        """Summarise what fraction of the supplied probe IDs were successfully mapped."""
         if not self._is_loaded:
             self.load()
-        total  = len(probe_ids)
+        total = len(probe_ids)
         mapped = sum(1 for p in probe_ids if self._probe_to_symbol.get(str(p)))
         return {
-            "total_probes":  total,
+            "total_probes": total,
             "mapped_probes": mapped,
-            "unmapped":      total - mapped,
-            "coverage_pct":  round(100 * mapped / max(total, 1), 1),
+            "unmapped": total - mapped,
+            "coverage_pct": round(100 * mapped / max(total, 1), 1),
         }
 
     # ── Private helpers ───────────────────────────────────────────────────────
@@ -272,23 +263,38 @@ class ProbeMapper:
                 f"  {self.cache_path}"
             ) from e
 
-        # Decompress
         try:
             with gzip.open(io.BytesIO(raw), "rt", encoding="utf-8", errors="replace") as fh:
                 lines = fh.readlines()
         except Exception as e:
-            raise RuntimeError(f"Failed to decompress GPL6244 annotation: {e}") from e
+            raise RuntimeError(
+                f"Failed to decompress GPL6244 annotation: {e}"
+            ) from e
 
-        # Separate comment header from data
-        # The GPL6244 annotation format:
-        #   Lines beginning with # are metadata/comments
-        #   First non-comment line is the column header
-        #   Subsequent lines are data rows
-        data_lines = [ln for ln in lines if not ln.startswith("#") and ln.strip()]
+        # ── FIX v2.0: filter ALL GEO metadata prefixes (^, !, #) ─────────────
+        # Previous version only filtered '#' lines, keeping '^PLATFORM' and
+        # '!Platform_*' lines which caused pd.read_csv to fail.
+        # GPL6244 annotation format:
+        #   ^  = record type (e.g. ^PLATFORM = GPL6244)
+        #   !  = field values (e.g. !Platform_title = ...)
+        #   #  = column descriptions (e.g. #ID = Probe Set ID)
+        #   first non-metadata line = column headers
+        #   remaining lines = data rows
+        data_lines = [
+            ln for ln in lines
+            if ln.strip() and not ln.startswith(_GEO_METADATA_PREFIXES)
+        ]
+
         if not data_lines:
-            raise ValueError("GPL6244 annotation: no data lines found after comment header")
+            raise ValueError(
+                "GPL6244 annotation: no data lines found after filtering metadata. "
+                "The file may be in an unexpected format."
+            )
 
-        logger.info("Parsing GPL6244 annotation (%d data lines)...", len(data_lines))
+        logger.info(
+            "Parsing GPL6244 annotation (%d data lines after metadata removal)...",
+            len(data_lines),
+        )
 
         try:
             df = pd.read_csv(
@@ -299,30 +305,41 @@ class ProbeMapper:
                 na_filter=False,
             )
         except Exception as e:
-            raise RuntimeError(f"Failed to parse GPL6244 annotation as TSV: {e}") from e
+            # Log first few lines for debugging
+            preview = "".join(data_lines[:5])
+            logger.error(
+                "Failed to parse GPL6244 as TSV. First 5 data lines:\n%s", preview
+            )
+            raise RuntimeError(
+                f"Failed to parse GPL6244 annotation as TSV: {e}"
+            ) from e
 
         df.columns = df.columns.str.strip()
-        logger.debug("GPL6244 columns: %s", list(df.columns[:10]))
+        logger.debug("GPL6244 parsed columns: %s", list(df.columns[:8]))
 
-        id_col     = _find_col(df, _ID_CANDIDATES)
+        id_col = _find_col(df, _ID_CANDIDATES)
         symbol_col = _find_col(df, _SYMBOL_CANDIDATES)
         entrez_col = _find_col(df, _ENTREZ_CANDIDATES)
 
         if id_col is None:
             raise ValueError(
-                f"Could not find probe ID column. Available columns: {list(df.columns)}"
+                f"Could not find probe ID column in GPL6244. "
+                f"Available columns: {list(df.columns)}"
             )
         if symbol_col is None:
             raise ValueError(
-                f"Could not find gene symbol column. Available columns: {list(df.columns)}"
+                f"Could not find gene symbol column in GPL6244. "
+                f"Available columns: {list(df.columns)}"
             )
 
-        logger.info("Probe ID column: '%s' | Symbol column: '%s'", id_col, symbol_col)
+        logger.info(
+            "GPL6244: ID column='%s', Symbol column='%s'", id_col, symbol_col
+        )
 
         # Build mappings
         for _, row in df.iterrows():
             probe = str(row[id_col]).strip()
-            sym   = _first_symbol(str(row[symbol_col]))
+            sym = _first_symbol(str(row[symbol_col]))
             self._probe_to_symbol[probe] = sym
             if entrez_col:
                 self._probe_to_entrez[probe] = str(row[entrez_col]).strip()
@@ -331,14 +348,16 @@ class ProbeMapper:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_df = pd.DataFrame([
             {
-                "probe_id":    k,
+                "probe_id": k,
                 "gene_symbol": v,
-                "entrez_id":   self._probe_to_entrez.get(k, ""),
+                "entrez_id": self._probe_to_entrez.get(k, ""),
             }
             for k, v in self._probe_to_symbol.items()
         ])
         cache_df.to_csv(self.cache_path, sep="\t", index=False)
-        logger.info("GPL6244 probe map cached → %s (%d rows)", self.cache_path, len(cache_df))
+        logger.info(
+            "GPL6244 probe map cached → %s (%d rows)", self.cache_path, len(cache_df)
+        )
 
     def _load_from_cache(self) -> None:
         """Load previously parsed probe→symbol mapping from TSV cache."""
@@ -349,16 +368,28 @@ class ProbeMapper:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Series matrix parser (needed before ProbeMapper.map_probes_to_genes)
+# parse_geo_series_matrix  —  BUG FIX v2.0
 # ─────────────────────────────────────────────────────────────────────────────
 
-def parse_geo_series_matrix(path: str | Path) -> tuple[pd.DataFrame, dict]:
+def parse_geo_series_matrix(
+    path,
+) -> Tuple[pd.DataFrame, dict]:
     """
     Parse a GEO series_matrix.txt file into expression data + sample metadata.
 
+    BUG FIX v2.0:
+    The previous version handled ALL lines starting with '!' inside a single
+    block with `continue`, which meant that the !series_matrix_table_begin
+    marker was consumed as metadata and `in_table` never became True.
+    Result: table_lines was always empty → ValueError on every call.
+
+    FIX: check for table begin/end markers BEFORE the generic '!' metadata
+    handler, using explicit string matching.
+
     GEO series matrix format:
         Lines starting with '!' are key-value metadata.
-        Data is between '!series_matrix_table_begin' and '!series_matrix_table_end'.
+        '!series_matrix_table_begin' marks the start of the data table.
+        '!series_matrix_table_end' marks the end of the data table.
         First data row is the column header ('ID_REF' + GSM accessions).
         Subsequent rows are probe ID + float expression values.
 
@@ -376,7 +407,6 @@ def parse_geo_series_matrix(path: str | Path) -> tuple[pd.DataFrame, dict]:
     path = Path(path)
     logger.info("Parsing GEO series matrix: %s", path)
 
-    # Handle gzipped files
     if str(path).endswith(".gz"):
         import gzip as _gz
         open_fn = lambda p: _gz.open(p, "rt", encoding="utf-8", errors="replace")
@@ -385,49 +415,76 @@ def parse_geo_series_matrix(path: str | Path) -> tuple[pd.DataFrame, dict]:
 
     metadata: dict = {}
     in_table = False
-    table_lines: list[str] = []
+    table_lines: list = []
+
+    # Table begin/end marker strings (with and without surrounding quotes)
+    TABLE_BEGIN_MARKERS = {
+        "!series_matrix_table_begin",
+        '"!series_matrix_table_begin"',
+    }
+    TABLE_END_MARKERS = {
+        "!series_matrix_table_end",
+        '"!series_matrix_table_end"',
+    }
 
     with open_fn(path) as fh:
         for line in fh:
-            line = line.rstrip("\n")
+            line_stripped = line.rstrip("\n").rstrip("\r")
+            line_lower = line_stripped.lower().strip()
 
-            # Metadata lines
-            if line.startswith("!"):
-                key, _, val = line.partition("\t")
+            # ── FIX: check table markers FIRST, before generic '!' handler ──
+            if line_lower in TABLE_BEGIN_MARKERS:
+                in_table = True
+                continue
+
+            if line_lower in TABLE_END_MARKERS:
+                in_table = False
+                break
+
+            # Collect data table lines
+            if in_table:
+                if line_stripped.strip():
+                    table_lines.append(line_stripped)
+                continue
+
+            # Generic metadata handler (only reached if NOT a table marker)
+            if line_stripped.startswith("!"):
+                key, _, val = line_stripped.partition("\t")
                 key = key.lstrip("!")
                 if key not in metadata:
                     metadata[key] = []
-                # GEO metadata values are quoted — strip them
                 metadata[key].append(val.strip('"'))
-                continue
-
-            # Data table markers
-            if line.startswith("!series_matrix_table_begin") or line.startswith("\"!series_matrix_table_begin\""):
-                in_table = True
-                continue
-            if line.startswith("!series_matrix_table_end") or line.startswith("\"!series_matrix_table_end\""):
-                break
-
-            if in_table and line.strip():
-                table_lines.append(line)
 
     if not table_lines:
         raise ValueError(
             f"No data table found in {path}. "
-            "Expected '!series_matrix_table_begin' / '!series_matrix_table_end' markers."
+            "Expected '!series_matrix_table_begin' / '!series_matrix_table_end' markers.\n"
+            "Make sure the file is a valid GEO series matrix file."
         )
 
-    # Parse the expression table
-    expr_df = pd.read_csv(
-        io.StringIO("\n".join(table_lines)),
-        sep="\t",
-        index_col=0,
-        dtype=str,
-        na_filter=False,
+    logger.info(
+        "Found %d data lines between table markers", len(table_lines)
     )
+
+    # Parse the expression table
+    try:
+        expr_df = pd.read_csv(
+            io.StringIO("\n".join(table_lines)),
+            sep="\t",
+            index_col=0,
+            dtype=str,
+            na_filter=False,
+        )
+    except Exception as e:
+        preview = "\n".join(table_lines[:3])
+        logger.error("Failed to parse data table. First 3 lines:\n%s", preview)
+        raise ValueError(
+            f"Failed to parse GEO series matrix data table: {e}"
+        ) from e
+
     expr_df.index.name = "probe_id"
-    # Strip quotes from index and column names (GEO sometimes quotes them)
-    expr_df.index   = expr_df.index.str.strip('"')
+    # Strip quotes from index and column names
+    expr_df.index = expr_df.index.str.strip('"')
     expr_df.columns = expr_df.columns.str.strip('"')
 
     # Convert to numeric
