@@ -618,3 +618,4 @@ ATRT_CURATED_SCORES = {
     "IDO1":    0.48,
     "IDO2":    0.44,
 }
+
