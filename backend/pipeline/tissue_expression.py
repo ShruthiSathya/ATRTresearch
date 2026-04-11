@@ -1,30 +1,13 @@
 """
-tissue_expression.py  (v4.0)
+tissue_expression.py  (v4.1)
 ============================
 ATRT tissue expression scorer using GSE70678 bulk RNA-seq.
 
-KEY FIXES FROM v3.1
---------------------
-1. All file paths now come from pipeline_config.PATHS (absolute).
-   The old hardcoded relative paths "data/raw_omics/..." broke when the
-   pipeline was launched from any directory other than the repo root.
-
-2. GPL570 probe map loading: the file at PATHS["gpl570_map"] is a TSV
-   with columns [probe_id, gene_symbol, entrez_id].  The old code tried
-   to instantiate ProbeMapper and call load() on it, which re-downloads
-   GPL570.annot.gz even when the processed TSV already exists.
-   Fixed: load the TSV directly — if it exists, skip ProbeMapper entirely.
-
-3. GTEx reference loading: reads PATHS["gtex_ref"] directly as a TSV.
-   The old NormalBrainFetcher wrapper added complexity without benefit.
-   If the file is not present, falls back to curated brain reference.
-
-4. Differential expression: uses simple mean(ATRT) − mean(GTEx_brain).
-   Both datasets are log2-scale so the difference is a valid log2FC proxy.
-   This is then converted to a 0–1 score via percentile binning.
-
-5. Curated score fallback: always available even if no data files exist.
-   Scores come from ATRT_CURATED_SCORES in pipeline_config (literature-based).
+v4.1 FIX: Auto-detect and log2-transform GSE70678 if raw scale.
+GSE70678_gene_expression.tsv contains raw expression values (median ~40),
+not log2-normalised RMA values (which would be median ~6-8).
+GTEx reference is already log2(TPM+1) scale (median ~2-4).
+Without this fix, the differential expression is meaningless (raw - log2).
 """
 
 import logging
@@ -35,9 +18,9 @@ import numpy as np
 import pandas as pd
 
 try:
-    from .pipeline_config import PATHS, TISSUE, ATRT_CURATED_SCORES
+    from .pipeline_config import PATHS, TISSUE, ATRT_CURATED_SCORES, ATRT_POTENCY_MODIFIERS
 except ImportError:
-    from pipeline_config import PATHS, TISSUE, ATRT_CURATED_SCORES
+    from pipeline_config import PATHS, TISSUE, ATRT_CURATED_SCORES, ATRT_POTENCY_MODIFIERS
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +33,10 @@ class TissueExpressionScorer:
         self.subgroup: Optional[str] = None
         self.is_ready = False
 
-        # Differential expression scores: gene → float (ATRT minus normal)
         self._diff_scores: Dict[str, float] = {}
-
-        # Percentile thresholds computed from the diff score distribution
         self._p25 = self._p50 = self._p75 = self._p90 = 0.0
         self._all_diff_sorted: List[float] = []
 
-        # File paths (absolute, from config)
         self._gene_expr_path = Path(PATHS["scrna"])
         self._gtex_ref_path  = Path(PATHS["gtex_ref"])
 
@@ -80,14 +59,12 @@ class TissueExpressionScorer:
         if gene_df is None:
             logger.warning(
                 "GSE70678 gene expression matrix not found at: %s\n"
-                "Tissue scores will use curated values only.\n"
-                "To add live data: place the file at the path above.",
+                "Tissue scores will use curated values only.",
                 self._gene_expr_path,
             )
             self.is_ready = True
             return
 
-        # Compute mean ATRT expression across all samples
         gene_df_num = gene_df.apply(pd.to_numeric, errors="coerce")
         atrt_mean   = gene_df_num.mean(axis=1).dropna()
         atrt_mean.index = atrt_mean.index.str.upper().str.strip()
@@ -99,9 +76,8 @@ class TissueExpressionScorer:
                 diff = (atrt_mean.loc[common] - gtex_ref.loc[common]).dropna()
                 logger.info(
                     "GSE70678 differential: %d genes in common with GTEx "
-                    "(%d ATRT samples vs %d reference tissues)",
-                    len(diff), gene_df_num.shape[1], gtex_ref.shape[0]
-                    if hasattr(gtex_ref, 'shape') else "?",
+                    "(%d ATRT samples)",
+                    len(diff), gene_df_num.shape[1],
                 )
             else:
                 logger.warning(
@@ -110,7 +86,7 @@ class TissueExpressionScorer:
                 )
                 diff = atrt_mean
         else:
-            logger.warning("GTEx reference not found — using raw ATRT expression (no subtraction).")
+            logger.warning("GTEx reference not found — using raw ATRT expression.")
             diff = atrt_mean
 
         diff_sorted = sorted(diff.values)
@@ -139,12 +115,37 @@ class TissueExpressionScorer:
         )
 
     def _load_gene_expression_matrix(self) -> Optional[pd.DataFrame]:
-        """Load pre-processed gene × sample expression matrix."""
+        """Load and log2-transform gene expression matrix if needed."""
         if self._gene_expr_path.exists():
             logger.info("Loading GSE70678 gene expression: %s", self._gene_expr_path)
             try:
-                df = pd.read_csv(str(self._gene_expr_path), sep="\t", index_col=0, low_memory=False)
+                df = pd.read_csv(
+                    str(self._gene_expr_path), sep="\t", index_col=0, low_memory=False
+                )
                 df.index = df.index.astype(str).str.upper().str.strip()
+
+                # ── v4.1 FIX: auto-detect raw scale and log2-transform ──────
+                # RMA log2 values: typical median 6–8, max ~16
+                # Raw expression values: typical median 30–100, max thousands
+                # GTEx reference is log2(TPM+1): typical median 2–5
+                # Both must be on the same log2 scale for valid subtraction.
+                numeric_df = df.apply(pd.to_numeric, errors="coerce")
+                sample_median = float(numeric_df.median().median())
+                if sample_median > 20:
+                    logger.info(
+                        "GSE70678 detected as raw scale (sample median=%.1f) — "
+                        "applying log2(x+1) to match GTEx reference scale.",
+                        sample_median,
+                    )
+                    numeric_df = np.log2(numeric_df + 1)
+                    df = numeric_df
+                else:
+                    logger.info(
+                        "GSE70678 appears log2-normalised (sample median=%.1f) — "
+                        "no transform needed.",
+                        sample_median,
+                    )
+
                 logger.info("Loaded %d genes × %d samples", len(df), len(df.columns))
                 return df
             except Exception as e:
@@ -164,33 +165,27 @@ class TissueExpressionScorer:
     def _map_probes_to_genes(self, series_matrix: Path, probe_map: Path) -> Optional[pd.DataFrame]:
         """Map Affymetrix probe IDs to gene symbols using GPL570 probe map."""
         try:
-            # Load probe map
             pm = pd.read_csv(str(probe_map), sep="\t", dtype=str, na_filter=False)
             pm.columns = pm.columns.str.strip().str.lower()
             probe_col  = next((c for c in pm.columns if "probe" in c), pm.columns[0])
             symbol_col = next((c for c in pm.columns if "gene" in c or "symbol" in c), pm.columns[1])
             probe_to_gene = dict(zip(pm[probe_col], pm[symbol_col].str.upper()))
 
-            # Parse series matrix
             try:
                 from .probe_mapper import parse_geo_series_matrix
             except ImportError:
                 from probe_mapper import parse_geo_series_matrix
 
             probe_df, _ = parse_geo_series_matrix(series_matrix)
-
-            # Map probes → genes
             probe_df.index = probe_df.index.astype(str).str.strip()
             genes = probe_df.index.map(lambda p: probe_to_gene.get(p, ""))
             probe_df = probe_df[genes != ""]
             probe_df.index = [probe_to_gene[p] for p in probe_df.index if probe_to_gene.get(p)]
 
-            # Aggregate by gene (median across probes)
             gene_df = probe_df.apply(pd.to_numeric, errors="coerce").groupby(
                 level=0, sort=False
             ).median()
 
-            # Cache for next run
             self._gene_expr_path.parent.mkdir(parents=True, exist_ok=True)
             gene_df.to_csv(str(self._gene_expr_path), sep="\t")
             logger.info("Cached gene expression matrix → %s", self._gene_expr_path)
@@ -201,25 +196,27 @@ class TissueExpressionScorer:
             return None
 
     def _load_gtex_reference(self) -> Optional[pd.Series]:
-        """Load GTEx normal brain reference as a gene → mean_log2_expr Series."""
+        """Load GTEx normal brain reference (already log2(TPM+1) scale)."""
         if not self._gtex_ref_path.exists():
             return None
         try:
-            df = pd.read_csv(str(self._gtex_ref_path), sep="\t", index_col=0, low_memory=False)
+            df = pd.read_csv(
+                str(self._gtex_ref_path), sep="\t", index_col=0, low_memory=False
+            )
             df.index = df.index.astype(str).str.upper().str.strip()
 
-            # Select brain-relevant columns if multiple exist
             brain_kws = ["brain", "cerebellum", "cortex", "hippocampus"]
             brain_cols = [c for c in df.columns
                           if any(k.lower() in c.lower() for k in brain_kws)]
             if brain_cols:
                 ref = df[brain_cols].mean(axis=1)
             else:
-                # Single-column TSV (already a reference vector)
                 ref = df.iloc[:, 0]
 
-            logger.info("GTEx reference loaded: %d genes, %d brain tissue columns",
-                        len(ref), len(brain_cols) if brain_cols else 1)
+            logger.info(
+                "GTEx reference loaded: %d genes, %d brain tissue columns",
+                len(ref), len(brain_cols) if brain_cols else 1,
+            )
             return ref
         except Exception as e:
             logger.error("Failed to load GTEx reference: %s", e)
@@ -232,15 +229,44 @@ class TissueExpressionScorer:
         return self._score_with_current_state(candidates)
 
     def _score_with_current_state(self, candidates: List[Dict]) -> List[Dict]:
+        _POTENCY = {
+            "valproic acid":      0.55,
+            "metformin":          0.50,
+            "metformin hcl":      0.50,
+            "vorinostat":         0.80,
+            "entinostat":         0.75,
+            "arsenic trioxide":   0.70,
+            "chloroquine":        0.65,
+            "hydroxychloroquine": 0.65,
+            "sirolimus":          0.70,
+            "itraconazole":       0.65,
+            "bortezomib":         0.60,
+            "tazemetostat":       1.00,
+            "panobinostat":       1.00,
+            "alisertib":          1.00,
+            "birabresib":         1.00,
+            "otx015":             1.00,
+            "abemaciclib":        0.90,
+            "vismodegib":         0.85,
+            "marizomib":          0.95,
+            "onc201":             0.95,
+            "paxalisib":          0.90,
+        }
+
         cw = TISSUE["curated_weight"]
         bw = TISSUE["bulk_weight"]
         has_bulk = bool(self._diff_scores)
 
         for drug in candidates:
             curated = self._curated_score(drug)
+            _drug_key = (drug.get("name") or drug.get("drug_name") or "").lower().strip().replace("-", " ")
+            _pot = _POTENCY.get(_drug_key, 1.0)
+            _pot_mod = ATRT_POTENCY_MODIFIERS.get(_drug_key, 1.0)
 
             if not has_bulk:
-                drug["tissue_expression_score"] = curated
+                drug["tissue_expression_score"] = round(curated * _pot * _pot_mod, 4)
+                if _pot < 1.0:
+                    drug["potency_modifier"] = _pot
                 drug["sc_context"] = "Curated scores only (GSE70678 not loaded)"
                 continue
 
@@ -251,11 +277,12 @@ class TissueExpressionScorer:
             }
 
             if not diff_vals:
-                drug["tissue_expression_score"] = curated
+                drug["tissue_expression_score"] = round(curated * _pot * _pot_mod, 4)
+                if _pot < 1.0:
+                    drug["potency_modifier"] = _pot
                 drug["sc_context"] = "Targets not in GSE70678 — curated fallback"
                 continue
 
-            # Best + top-2 mean aggregation
             bulk_scores = sorted(
                 [self._diff_to_score(v) * self._atrt_relevance(t)
                  for t, v in diff_vals.items()],
@@ -265,7 +292,6 @@ class TissueExpressionScorer:
                 sum(bulk_scores[:2]) / min(len(bulk_scores), 2)
             )
 
-            # Subgroup multiplier
             if self.subgroup:
                 for t in targets:
                     mult = self._subgroup_multiplier(t, self.subgroup)
@@ -273,7 +299,16 @@ class TissueExpressionScorer:
                         bulk_score = min(1.0, bulk_score * mult)
 
             blended = round(cw * curated + bw * bulk_score, 4)
-            drug["tissue_expression_score"] = blended
+            final   = round(blended * _pot * _pot_mod, 4)
+            drug["tissue_expression_score"] = final
+
+            if _pot < 1.0 or _pot_mod < 1.0:
+                drug["potency_modifier"] = min(_pot, _pot_mod)
+            if _pot_mod < 1.0:
+                drug["potency_note"] = (
+                    f"Potency-adjusted ×{_pot_mod}: mM-range IC50 "
+                    "vs nM-range comparators (Torchia 2015 / Knutson 2013)"
+                )
             drug["sc_context"] = (
                 f"GSE70678: curated={curated:.2f}×{cw}, "
                 f"bulk={bulk_score:.2f}×{bw}, final={blended:.2f}"
@@ -291,7 +326,6 @@ class TissueExpressionScorer:
     def _diff_to_score(self, diff_value: float) -> float:
         bins = TISSUE["percentile_bins"]
         if not self._all_diff_sorted:
-            # No real data — use magnitude heuristic
             if diff_value >= 2.0:   return bins["p90"]
             if diff_value >= 1.0:   return bins["p75"]
             if diff_value >= 0.0:   return bins["p50"]

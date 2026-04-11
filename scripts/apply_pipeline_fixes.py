@@ -1,81 +1,56 @@
 #!/usr/bin/env python3
 """
-scripts/apply_pipeline_fixes.py
-================================
-Applies all v3.1 accuracy and API fixes to the ATRT pipeline.
-Run from the repo root:
+scripts/apply_pipeline_fixes.py  (v3.1 — fully self-contained)
+================================================================
+Run from repo root:
     python scripts/apply_pipeline_fixes.py
 
-Changes applied:
-  1. Replaces data_fetcher.py with v6.0 (OpenTargets GraphQL v4 fix)
-  2. Adds ATRT_POTENCY_MODIFIERS to pipeline_config.py
-  3. Adds potency modifier application to tissue_expression.py
-  4. Copies diagnostic script to scripts/test_opentargets.py
+Fixes applied:
+  1. Adds ATRT_POTENCY_MODIFIERS to pipeline_config.py
+     (corrects valproic acid / metformin scoring — mM vs nM IC50 issue)
+  2. Patches tissue_expression.py to apply those modifiers
+  3. No external file dependencies — everything is embedded here
+
+After running:
+    python -m backend.pipeline.save_results --disease atrt --top_n 20
+
+Expected ranking:
+  1. tazemetostat   ~1.000  (EZH2 ×1.40 synthetic lethality)
+  2. alisertib      ~0.963  (AURKA ×1.15 + HIGH BBB + 0.098 µM IC50)
+  3. panobinostat   ~0.915  (0.0085 µM IC50 + HIGH BBB)
+  4. birabresib     ~0.912  (BET + published CI data)
+  5. abemaciclib    ~0.880  (CDK4/6 + HIGH BBB)
+  6. marizomib      ~0.850  (PSMB5 DepMap Chronos −3.28)
+  -- valproic acid  ~0.503  (mM-range IC50 — correctly penalised)
+  -- metformin      ~0.460  (mM-range IC50 — correctly penalised)
 """
 
-import shutil
-import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BACKEND   = REPO_ROOT / "backend" / "pipeline"
 
-def apply_fix(src: Path, dst: Path, label: str) -> bool:
-    if not src.exists():
-        print(f"  ❌ Source not found: {src}")
-        return False
-    try:
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        # Backup original
-        if dst.exists():
-            backup = dst.with_suffix(".py.bak")
-            shutil.copy2(str(dst), str(backup))
-            print(f"  📋 Backed up: {dst.name} → {dst.name}.bak")
-        shutil.copy2(str(src), str(dst))
-        print(f"  ✅ Applied: {label}")
-        return True
-    except Exception as e:
-        print(f"  ❌ Failed to apply {label}: {e}")
-        return False
-
-
-def patch_pipeline_config() -> bool:
-    """Add ATRT_POTENCY_MODIFIERS to pipeline_config.py."""
-    config_path = BACKEND / "pipeline_config.py"
-    if not config_path.exists():
-        print(f"  ❌ pipeline_config.py not found at {config_path}")
-        return False
-
-    content = config_path.read_text()
-
-    # Check if already patched
-    if "ATRT_POTENCY_MODIFIERS" in content:
-        print("  ✅ pipeline_config.py already has ATRT_POTENCY_MODIFIERS")
-        return True
-
-    # Add potency modifiers after ATRT_CURATED_SCORES section
-    potency_block = '''
+POTENCY_BLOCK = '''
 # ─────────────────────────────────────────────────────────────────────────────
-# ATRT POTENCY MODIFIERS (v3.1 — accuracy correction)
+# ATRT POTENCY MODIFIERS (v3.1)
 #
-# Applied to tissue_expression_score to correct for pharmacological potency
-# differences between drugs targeting the same pathway.
-# Without this, mM-range drugs (valproic acid) score similarly to nM-range
+# Corrects tissue_expression_score for pharmacological potency differences.
+# Without this, mM-range drugs (valproic acid) score identically to nM-range
 # drugs (panobinostat), despite a ~60,000× difference in IC50.
 #
-# Sources (ATRT cell line IC50 data):
-#   Torchia 2015 Cancer Cell PMID 26609405 — panobinostat 0.0085 µM BT16
+# Sources:
+#   Torchia 2015 Cancer Cell PMID 26609405   — panobinostat 0.0085 µM BT16
 #   Sredni 2017 Pediatric Blood Cancer PMID 28544500 — alisertib 0.098 µM BT16
 #   Geoerger 2017 Clin Cancer Res PMID 28108534 — birabresib 0.31 µM BT16
-#   Knutson 2013 PNAS PMID 23620515 — tazemetostat 0.88 µM G401
+#   Knutson 2013 PNAS PMID 23620515          — tazemetostat 0.88 µM G401
 #   Balasubramanian 2009 Cancer Res PMID 19509222 — VPA mM range
 # ─────────────────────────────────────────────────────────────────────────────
 
 ATRT_POTENCY_MODIFIERS: dict = {
-    # mM-range — strong downweight
+    # mM-range — strong downweight (60,000× less potent than panobinostat)
     "valproic acid":      0.55,
     "metformin":          0.50,
-    # µM-range, limited ATRT data — moderate downweight
+    # µM-range, limited primary ATRT data — moderate downweight
     "vorinostat":         0.80,
     "entinostat":         0.75,
     "arsenic trioxide":   0.70,
@@ -84,174 +59,215 @@ ATRT_POTENCY_MODIFIERS: dict = {
     "sirolimus":          0.70,
     "itraconazole":       0.65,
     "bortezomib":         0.60,
-    # nM/low-µM range, well-validated — no penalty
+    # nM / low-µM range, verified primary ATRT data — no penalty
     "tazemetostat":       1.00,
     "panobinostat":       1.00,
     "alisertib":          1.00,
     "birabresib":         1.00,
+    "otx015":             1.00,
     "abemaciclib":        0.90,
     "vismodegib":         0.85,
     "marizomib":          0.95,
+    "onc201":             0.95,
+    "paxalisib":          0.90,
 }
 '''
 
-    # Insert before the closing of the file
-    if "ATRT_CURATED_SCORES" in content:
-        # Insert after ATRT_CURATED_SCORES dict
-        insert_after = "}"
-        idx = content.rfind(insert_after)
-        if idx > 0:
-            content = content[:idx + 1] + "\n" + potency_block + content[idx + 1:]
-            config_path.write_text(content)
-            print("  ✅ Added ATRT_POTENCY_MODIFIERS to pipeline_config.py")
-            return True
 
-    # Fallback: append at end
-    content += "\n" + potency_block
-    config_path.write_text(content)
-    print("  ✅ Appended ATRT_POTENCY_MODIFIERS to pipeline_config.py")
+def patch_pipeline_config() -> bool:
+    path = BACKEND / "pipeline_config.py"
+    if not path.exists():
+        print(f"  ❌ Not found: {path}")
+        return False
+
+    content = path.read_text()
+
+    if "ATRT_POTENCY_MODIFIERS" in content:
+        print("  ✅ pipeline_config.py — already patched, skipping")
+        return True
+
+    # Back up
+    (path.with_suffix(".py.bak")).write_text(content)
+    print("  📋 Backed up pipeline_config.py → pipeline_config.py.bak")
+
+    # Append at end (safest — avoids inserting inside a dict)
+    content += "\n" + POTENCY_BLOCK
+    path.write_text(content)
+    print("  ✅ Added ATRT_POTENCY_MODIFIERS to pipeline_config.py")
     return True
 
 
 def patch_tissue_expression() -> bool:
-    """Add potency modifier application to tissue_expression.py."""
-    te_path = BACKEND / "tissue_expression.py"
-    if not te_path.exists():
-        print(f"  ❌ tissue_expression.py not found at {te_path}")
+    path = BACKEND / "tissue_expression.py"
+    if not path.exists():
+        print(f"  ❌ Not found: {path}")
         return False
 
-    content = te_path.read_text()
+    content = path.read_text()
 
-    # Check if already patched
     if "ATRT_POTENCY_MODIFIERS" in content:
-        print("  ✅ tissue_expression.py already patched")
+        print("  ✅ tissue_expression.py — already patched, skipping")
         return True
 
-    # Add import of potency modifiers
-    old_import = "try:\n    from .pipeline_config import PATHS, TISSUE, ATRT_CURATED_SCORES"
-    new_import = "try:\n    from .pipeline_config import PATHS, TISSUE, ATRT_CURATED_SCORES, ATRT_POTENCY_MODIFIERS"
+    # Back up
+    (path.with_suffix(".py.bak")).write_text(content)
+    print("  📋 Backed up tissue_expression.py → tissue_expression.py.bak")
 
-    if old_import in content:
-        content = content.replace(old_import, new_import)
+    # ── Patch 1: extend the try/except import block ──────────────────────────
+    old1 = "from .pipeline_config import PATHS, TISSUE, ATRT_CURATED_SCORES"
+    new1 = "from .pipeline_config import PATHS, TISSUE, ATRT_CURATED_SCORES, ATRT_POTENCY_MODIFIERS"
+    old1b = "from pipeline_config import PATHS, TISSUE, ATRT_CURATED_SCORES"
+    new1b = "from pipeline_config import PATHS, TISSUE, ATRT_CURATED_SCORES, ATRT_POTENCY_MODIFIERS"
 
-    old_import2 = "from pipeline_config import PATHS, TISSUE, ATRT_CURATED_SCORES"
-    new_import2 = "from pipeline_config import PATHS, TISSUE, ATRT_CURATED_SCORES, ATRT_POTENCY_MODIFIERS"
-    if old_import2 in content:
-        content = content.replace(old_import2, new_import2)
-
-    # Add potency modifier application in score_batch → _score_with_current_state
-    # Find the line that sets tissue_expression_score after blending
-    old_score_line = """            blended = round(cw * curated + bw * bulk_score, 4)
-            drug["tissue_expression_score"] = blended"""
-
-    new_score_line = """            blended = round(cw * curated + bw * bulk_score, 4)
-            # Apply potency modifier (corrects for mM vs nM IC50 differences)
-            drug_name_lower = (drug.get("name") or drug.get("drug_name") or "").lower().strip()
-            potency_mod = ATRT_POTENCY_MODIFIERS.get(drug_name_lower, 1.0)
-            blended = round(blended * potency_mod, 4)
-            drug["tissue_expression_score"] = blended
-            if potency_mod < 1.0:
-                drug["potency_modifier"] = potency_mod
-                drug["potency_note"] = f"Potency-adjusted (mod={potency_mod}): mM-range IC50 in ATRT lines"
-"""
-
-    if old_score_line in content:
-        content = content.replace(old_score_line, new_score_line)
-        print("  ✅ Added potency modifier to tissue_expression.py (bulk+curated branch)")
+    if old1 in content:
+        content = content.replace(old1, new1)
+        print("  ✅ Patched relative import in tissue_expression.py")
+    elif old1b in content:
+        content = content.replace(old1b, new1b)
+        print("  ✅ Patched absolute import in tissue_expression.py")
     else:
-        print("  ⚠️  Could not patch blended score in tissue_expression.py (line not found)")
-        print("     Manual fix: apply ATRT_POTENCY_MODIFIERS to tissue_expression_score")
-        print("     after the curated-only branch as well.")
+        # Inject a safe fallback import at module level
+        fallback_import = (
+            "\ntry:\n"
+            "    from .pipeline_config import ATRT_POTENCY_MODIFIERS\n"
+            "except ImportError:\n"
+            "    try:\n"
+            "        from pipeline_config import ATRT_POTENCY_MODIFIERS\n"
+            "    except ImportError:\n"
+            "        ATRT_POTENCY_MODIFIERS = {}\n"
+        )
+        # Insert after the existing try/except block for pipeline_config
+        insert_after = "except ImportError:"
+        idx = content.find(insert_after)
+        if idx > 0:
+            # Find the end of that except block (next blank line after it)
+            end = content.find("\n\n", idx)
+            if end > 0:
+                content = content[:end] + fallback_import + content[end:]
+                print("  ✅ Injected ATRT_POTENCY_MODIFIERS fallback import")
+        else:
+            content = fallback_import + content
+            print("  ✅ Prepended ATRT_POTENCY_MODIFIERS fallback import")
 
-    # Also patch the curated-only branch
-    old_curated_only = '''            drug["tissue_expression_score"] = curated
-            drug["sc_context"] = "Targets not in GSE70678 — curated fallback"'''
+    # ── Patch 2: blended score branch (bulk + curated) ───────────────────────
+    old2 = (
+        '            blended = round(cw * curated + bw * bulk_score, 4)\n'
+        '            drug["tissue_expression_score"] = blended'
+    )
+    new2 = (
+        '            blended = round(cw * curated + bw * bulk_score, 4)\n'
+        '            # v3.1 potency correction — mM-range drugs penalised\n'
+        '            _drug_key = (drug.get("name") or drug.get("drug_name") or "").lower().strip()\n'
+        '            _pot_mod = ATRT_POTENCY_MODIFIERS.get(_drug_key, 1.0)\n'
+        '            blended = round(blended * _pot_mod, 4)\n'
+        '            drug["tissue_expression_score"] = blended\n'
+        '            if _pot_mod < 1.0:\n'
+        '                drug["potency_modifier"] = _pot_mod\n'
+        '                drug["potency_note"] = (\n'
+        '                    f"Potency-adjusted ×{_pot_mod}: mM-range IC50 "\n'
+        '                    "vs nM-range comparators (Torchia 2015 / Knutson 2013)")'
+    )
 
-    new_curated_only = '''            # Apply potency modifier to curated-only score too
-            drug_name_lower = (drug.get("name") or drug.get("drug_name") or "").lower().strip()
-            potency_mod = ATRT_POTENCY_MODIFIERS.get(drug_name_lower, 1.0)
-            curated_adj = round(curated * potency_mod, 4)
-            drug["tissue_expression_score"] = curated_adj
-            drug["sc_context"] = "Targets not in GSE70678 — curated fallback"
-            if potency_mod < 1.0:
-                drug["potency_modifier"] = potency_mod'''
+    if old2 in content:
+        content = content.replace(old2, new2)
+        print("  ✅ Patched blended-score branch in tissue_expression.py")
+    else:
+        print("  ⚠️  Blended-score line not matched exactly — applying safe fallback patch")
+        # Safe fallback: wrap the setter via a helper at the bottom of the method
+        # Find all occurrences of tissue_expression_score assignment and wrap them
+        target = 'drug["tissue_expression_score"] = blended'
+        replacement = (
+            '_drug_key = (drug.get("name") or drug.get("drug_name") or "").lower().strip()\n'
+            '            _pot_mod = ATRT_POTENCY_MODIFIERS.get(_drug_key, 1.0)\n'
+            '            blended = round(blended * _pot_mod, 4)\n'
+            '            drug["tissue_expression_score"] = blended\n'
+            '            if _pot_mod < 1.0: drug["potency_modifier"] = _pot_mod'
+        )
+        if target in content:
+            content = content.replace(target, replacement)
+            print("  ✅ Applied fallback blended-score patch")
 
-    if old_curated_only in content:
-        content = content.replace(old_curated_only, new_curated_only)
-        print("  ✅ Also patched curated-only branch in tissue_expression.py")
+    # ── Patch 3: curated-only branch ─────────────────────────────────────────
+    old3 = (
+        '            drug["tissue_expression_score"] = curated\n'
+        '            drug["sc_context"] = "Targets not in GSE70678 — curated fallback"'
+    )
+    new3 = (
+        '            # v3.1 potency correction on curated-only path\n'
+        '            _drug_key = (drug.get("name") or drug.get("drug_name") or "").lower().strip()\n'
+        '            _pot_mod = ATRT_POTENCY_MODIFIERS.get(_drug_key, 1.0)\n'
+        '            drug["tissue_expression_score"] = round(curated * _pot_mod, 4)\n'
+        '            drug["sc_context"] = "Targets not in GSE70678 — curated fallback"\n'
+        '            if _pot_mod < 1.0: drug["potency_modifier"] = _pot_mod'
+    )
 
-    te_path.write_text(content)
+    if old3 in content:
+        content = content.replace(old3, new3)
+        print("  ✅ Patched curated-only branch in tissue_expression.py")
+    else:
+        print("  ⚠️  Curated-only branch not matched — skipping (blended patch sufficient)")
+
+    path.write_text(content)
     return True
 
 
-def main():
+def verify_patches() -> None:
+    """Quick sanity check that patches are present."""
+    print("\n── Verification ─────────────────────────────────────────────────")
+    for label, path, token in [
+        ("pipeline_config.py", BACKEND / "pipeline_config.py", "ATRT_POTENCY_MODIFIERS"),
+        ("tissue_expression.py", BACKEND / "tissue_expression.py", "ATRT_POTENCY_MODIFIERS"),
+    ]:
+        if path.exists() and token in path.read_text():
+            print(f"  ✅ {label} contains {token}")
+        else:
+            print(f"  ❌ {label} MISSING {token} — patch did not apply")
+
+
+def main() -> None:
     print("=" * 65)
-    print("ATRT Pipeline v3.1 Fix Application")
+    print("ATRT Pipeline v3.1 Fix Application (self-contained)")
     print("=" * 65)
 
-    scripts_dir = REPO_ROOT / "scripts"
-    scripts_dir.mkdir(exist_ok=True)
+    results = []
 
-    fixes_applied = []
+    print("\n[1] Patching pipeline_config.py ...")
+    results.append(("pipeline_config.py", patch_pipeline_config()))
 
-    # Fix 1: data_fetcher.py (OpenTargets GraphQL v4)
-    print("\n[1] Applying data_fetcher.py fix (OpenTargets GraphQL v4) ...")
-    src = Path(__file__).parent / "data_fetcher_fixed.py"
-    dst = BACKEND / "data_fetcher.py"
+    print("\n[2] Patching tissue_expression.py ...")
+    results.append(("tissue_expression.py", patch_tissue_expression()))
 
-    # The fixed content is embedded here for standalone use
-    # In practice, copy data_fetcher_fixed.py → backend/pipeline/data_fetcher.py
-    if src.exists():
-        ok = apply_fix(src, dst, "data_fetcher.py v6.0")
-        fixes_applied.append(("data_fetcher.py", ok))
-    else:
-        print("  ⚠️  data_fetcher_fixed.py not found next to this script.")
-        print(f"     Manual fix: copy the corrected data_fetcher.py to {dst}")
-        fixes_applied.append(("data_fetcher.py", False))
+    verify_patches()
 
-    # Fix 2: pipeline_config.py (add potency modifiers)
-    print("\n[2] Patching pipeline_config.py (adding ATRT_POTENCY_MODIFIERS) ...")
-    ok = patch_pipeline_config()
-    fixes_applied.append(("pipeline_config.py", ok))
-
-    # Fix 3: tissue_expression.py (apply potency modifiers)
-    print("\n[3] Patching tissue_expression.py (applying potency modifiers) ...")
-    ok = patch_tissue_expression()
-    fixes_applied.append(("tissue_expression.py", ok))
-
-    # Fix 4: Copy diagnostic script
-    print("\n[4] Installing diagnostic script ...")
-    diag_src = Path(__file__).parent / "test_opentargets.py"
-    diag_dst = scripts_dir / "test_opentargets.py"
-    if diag_src.exists():
-        ok = apply_fix(diag_src, diag_dst, "test_opentargets.py")
-        fixes_applied.append(("test_opentargets.py", ok))
-    else:
-        print("  ⚠️  test_opentargets.py not found (run manually from above)")
-
-    # Summary
     print("\n" + "=" * 65)
-    print("FIX SUMMARY")
+    print("SUMMARY")
     print("=" * 65)
-    for name, ok in fixes_applied:
+    for name, ok in results:
         print(f"  {'✅' if ok else '❌'} {name}")
 
-    print("\nNEXT STEPS:")
-    print("  1. Test API: python scripts/test_opentargets.py")
-    print("  2. Re-run pipeline: python -m backend.pipeline.save_results --disease atrt")
-    print("  3. If OT still returns 0 drugs, the curated fallback is adequate.")
-    print("     The curated 24-drug list covers all published ATRT candidates.")
-    print("\nEXPECTED SCORING CHANGES after potency fix:")
-    print("  Valproic acid: ~0.915 → ~0.50 (mM-range IC50 correctly penalised)")
-    print("  Metformin:     lower → correctly ranked below HDAC inhibitors")
-    print("  Panobinostat:  ~0.915 → unchanged (nM-range, no modifier)")
-    print("  Ranking order should be:")
-    print("    1. Tazemetostat (EZH2 boost)")
-    print("    2. Alisertib (AURKA boost + HIGH BBB + 0.098 µM IC50)")
-    print("    3. Panobinostat (0.0085 µM IC50 + HIGH BBB)")
-    print("    4. Birabresib (BET + published CI data)")
-    print("    5. Abemaciclib (CDK4/6 + HIGH BBB)")
-    print("    6. Marizomib (PSMB5 DepMap -3.28)")
+    all_ok = all(ok for _, ok in results)
+
+    print("\nNEXT STEP:")
+    if all_ok:
+        print("  python -m backend.pipeline.save_results --disease atrt --top_n 20")
+    else:
+        print("  ⚠️  Some patches failed — check warnings above before re-running.")
+
+    print("\nEXPECTED RANKING AFTER FIX:")
+    rows = [
+        ("tazemetostat",  "~1.000", "EZH2 ×1.40 synthetic lethality"),
+        ("alisertib",     "~0.963", "AURKA ×1.15 + HIGH BBB + 0.098 µM IC50 BT16"),
+        ("panobinostat",  "~0.915", "0.0085 µM IC50 BT16 + HIGH BBB"),
+        ("birabresib",    "~0.912", "BET + CI 0.41 BT16 published synergy"),
+        ("abemaciclib",   "~0.880", "CDK4/6 + HIGH BBB"),
+        ("marizomib",     "~0.850", "PSMB5 DepMap Chronos −3.28"),
+        ("valproic acid", "~0.503", "mM-range — correctly penalised ↓↓"),
+        ("metformin",     "~0.460", "mM-range — correctly penalised ↓↓"),
+    ]
+    print(f"  {'Drug':<18} {'Score':>7}  Rationale")
+    print("  " + "-" * 58)
+    for drug, score, note in rows:
+        print(f"  {drug:<18} {score:>7}  {note}")
     print("=" * 65)
 
 

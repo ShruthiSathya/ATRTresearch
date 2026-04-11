@@ -96,7 +96,7 @@ logger = logging.getLogger(__name__)
 
 def _normalise_drug_name(name: str) -> str:
     """Normalise a drug name to lowercase stripped canonical form."""
-    name = name.lower().strip()
+    name = name.lower().strip().replace("-", " ")
     for suffix in (" hydrochloride", " hcl", " sodium", " phosphate",
                    " sulfate", " mesylate", " acetate", " tartrate"):
         name = name.replace(suffix, "")

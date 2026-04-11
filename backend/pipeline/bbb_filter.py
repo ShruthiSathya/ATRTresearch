@@ -121,6 +121,13 @@ KNOWN_BBB_PENETRANCE: Dict[str, str] = {
     "pazopanib":          "LOW",
     "nintedanib":         "LOW",
     "azd-8055":           "LOW",    # Kp,uu ~0.2
+    #GENERIC
+    "givinostat":    "MODERATE",   # HDAC inhibitor; some CNS data
+    "carfilzomib":   "LOW",        # IV proteasome; poor CNS penetration
+    "fedratinib":    "MODERATE",   # JAK2 inhibitor; MW 527 Da
+    "lovastatin":    "HIGH",       # Lipophilic statin; crosses BBB
+    "docetaxel":     "LOW",        # Large MW; P-gp substrate
+    "paclitaxel":    "LOW",        # P-gp substrate; poor CNS
 }
 
 # Merge config extensions (no duplicates since each is canonical above)
@@ -165,6 +172,7 @@ class BBBFilter:
         for suffix in (" hydrochloride", " hcl", " sodium", " mesylate",
                        " malate", " phosphate", " sulfate", " acetate"):
             name = name.replace(suffix, "")
+        name = name.replace("-", " ") 
         name = name.strip()
 
         # Hard MW exclusion

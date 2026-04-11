@@ -312,8 +312,7 @@ def get_atrt_validation_score(drug_name: str) -> Optional[Dict]:
     Returns None if drug has no verified entries (not the same as "not tested").
     Returns dict with score components if verified data exists.
     """
-    name_upper = drug_name.upper().strip()
-
+    name_upper = drug_name.upper().strip().replace("-", " ")
     # Strip common formulation suffixes
     for suffix in (" HCL", " HYDROCHLORIDE", " SODIUM", " MESYLATE"):
         name_upper = name_upper.replace(suffix, "")
