@@ -460,7 +460,7 @@ const styles = `
 
 /* ─── AI rationale fetcher ────────────────────────────────── */
 async function fetchRationale(candidate, disease) {
-  const res = await fetch(`${API_BASE}/generate_analysis`, {
+  const res = await fetch(`${API_BASE}/generate_ai_analysis`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

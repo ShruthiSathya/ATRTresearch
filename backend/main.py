@@ -6,8 +6,19 @@ FastAPI entry point. Imports ProductionPipeline from discovery_pipeline
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+
 import logging
 import traceback
+import os
+from dotenv import load_dotenv
+from google import genai  # Use the google namespace
+
+# Load your .env file
+load_dotenv()
+
+# Initialize the Gemini Client
+# It will look for GOOGLE_API_KEY in your .env file
+client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
 # ── correct import path ───────────────────────────────────────────────────────
 from pipeline.discovery_pipeline import ProductionPipeline
@@ -275,3 +286,28 @@ async def subgroup_report(request: dict) -> dict:
             results_by_subgroup[subgroup] = {"error": traceback.format_exc()}
 
     return {"success": True, "subgroups": results_by_subgroup}
+
+@app.post("/generate_ai_analysis", tags=["Analysis"])
+async def generate_ai_analysis(request: dict) -> dict:
+    target_drug = request.get("target")
+    disease = request.get("disease", "ATRT")
+
+    if not target_drug:
+        return {"success": False, "error": "Missing target drug name"}
+
+    prompt = f"""
+    You are a pediatric neuro-oncologist specialized in SMARCB1-deficient tumors. 
+    Provide a concise (max 60 words) therapeutic rationale for using {target_drug} in {disease}.
+    Focus on molecular mechanisms like epigenetic dysregulation or synthetic lethality.
+    """
+
+    try:
+        # CHANGE THIS LINE: Use the specific model identifier
+        response = client.models.generate_content(
+            model="gemini-1.5-flash-002", # Or try "gemini-1.5-flash"
+            contents=prompt
+        )
+        return {"success": True, "analysis": response.text}
+    except Exception as e:
+        logger.error(f"AI Generation failed: {e}")
+        return {"success": False, "error": str(e)}
