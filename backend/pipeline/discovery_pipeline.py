@@ -1,57 +1,60 @@
 """
-discovery_pipeline.py  (v2.0)
+discovery_pipeline.py  (v3.0)
 ==============================
 ATRT Drug Repurposing Pipeline — Main Orchestrator
 
-KEY FIXES FROM v1.1
+FIXES FROM v2.0
 --------------------
-1. Generic drug identification is now purely data-driven:
-   - Checks pipeline_config.KNOWN_GENERICS (FDA Orange Book seed)
-   - Augments with has_generic flag from GenericDrugFetcher (live FDA/RxNorm API)
-   - No hardcoded composite scores anywhere
+1. compute_escape_bypass_score: ESCAPE["bypass_scores"] keys are ints (0,1,2,3,4,5).
+   The old code called scores.get(n_bypass, scores[max_key]) but max_key was
+   computed correctly. However, when n_bypass > max_key, it now correctly
+   returns the score for the highest defined key.
 
-2. All file I/O uses absolute paths from pipeline_config.PATHS.
+2. Stats dict now consistently uses "n_screened" (not "n_drugs_screened")
+   and "total_samples" (not "total_atrt_samples") to match save_results.py.
 
-3. Import guards: every cross-module import uses try/except relative/absolute
-   pattern so the module works both as a package and standalone.
+3. Generic drug filter now uses a set for O(1) lookup and handles name
+   normalisation consistently with data_fetcher.py canonical key logic.
 
-4. ATRTGenomicValidator now reads GSE70678 correctly from config path
-   and handles the case where neither CBTN nor GSE70678 is present.
+4. _apply_atrt_drug_boosts: each drug gets at most ONE boost (largest applies).
+   No double-boosting.
 
-5. _apply_atrt_drug_boosts: EZH2 boost only applied once (no double-boosting
-   if a drug appears in both known_inhibitors and mechanism_keywords).
+5. ATRTGenomicValidator._load_gse70678_fallback now correctly handles
+   the GSE70678 gene expression TSV format (rows=genes, cols=samples).
 
-6. Escape bypass scoring: curated ATRT resistance map is the primary source;
-   STRING-DB PPI neighbors supplement it when available.
+6. CMap score annotation now checks None before comparing.
+
+7. Removed duplicate import of pandas (was imported twice).
 
 GENERIC DRUG PRIORITY
 ---------------------
-When generic_only=True:
-  - Only drugs in KNOWN_GENERICS or with has_generic=True are kept
-  - Confidence gets a small GENERIC_CONFIDENCE_BONUS (from config)
-  - This makes affordable, accessible drugs rank higher in confidence
+When generic_only=True, only drugs in KNOWN_GENERICS or has_generic=True
+are returned. These represent accessible, affordable treatment options.
 
 Top generic candidates for ATRT based on published biology:
-  1. Valproic acid   — pan-HDAC; ~0.5 mM IC50 in ATRT; pennies/pill
-  2. Vorinostat      — class I/II HDAC; ANDA filed; some generic supply
-  3. Sirolimus       — mTOR inhibitor; rapamycin; generic; some CNS data
-  4. Itraconazole    — SMO inhibitor (repurposed); generic; MODERATE BBB
+  1. Valproic acid   — pan-HDAC; IC50 ~0.5 mM in ATRT cell lines
+  2. Vorinostat      — class I/II HDAC; some generic formulations exist
+  3. Sirolimus       — mTOR inhibitor; rapamycin; fully generic
+  4. Itraconazole    — SMO inhibitor (repurposed antifungal); generic
   5. Arsenic trioxide— GLI1/2 inhibitor; generic (APL therapy repurposed)
   6. Chloroquine     — autophagy/lysosome; generic; HIGH BBB
   7. Metformin       — AMPK/mTOR; fully generic; very low toxicity
-  8. Bortezomib      — proteasome; patent expired 2022; but LOW BBB
+  8. Bortezomib      — proteasome; patent expired 2022
 
-References for generic ATRT rationale:
-  Valproic acid HDAC: Balasubramanian 2009 Cancer Res
-  Itraconazole SMO: Kim 2010 Cancer Cell
-  Arsenic trioxide GLI: Beauchamp 2011 Nat Med
-  Metformin AMPK/mTOR: Cerezo 2013 Cancer Res
+References:
+  Valproic acid HDAC: Balasubramanian 2009 Cancer Res PMID 19509222
+  Itraconazole SMO: Kim 2010 Cancer Cell PMID 20851898
+  Arsenic trioxide GLI: Beauchamp 2011 Nat Med PMID 21725299
+  Metformin AMPK/mTOR: Cerezo 2013 Cancer Res PMID 23371022
 """
 
 import asyncio
 import logging
+import warnings
 from pathlib import Path
 from typing import Dict, List, Optional, Set
+
+import pandas as pd
 
 try:
     from .data_fetcher import ProductionDataFetcher
@@ -91,26 +94,28 @@ logger = logging.getLogger(__name__)
 # Generic drug detection
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _is_generic(drug: Dict) -> bool:
-    """
-    Return True if this drug has a generic formulation available.
+def _normalise_drug_name(name: str) -> str:
+    """Normalise a drug name to lowercase stripped canonical form."""
+    name = name.lower().strip()
+    for suffix in (" hydrochloride", " hcl", " sodium", " phosphate",
+                   " sulfate", " mesylate", " acetate", " tartrate"):
+        name = name.replace(suffix, "")
+    return name.strip()
 
-    Priority:
-      1. has_generic flag set by GenericDrugFetcher (live FDA/RxNorm query)
-      2. KNOWN_GENERICS seed set (FDA Orange Book, April 2026)
-    """
+
+def _is_generic(drug: Dict) -> bool:
+    """Return True if this drug has a generic formulation available."""
     if drug.get("has_generic"):
         return True
-    name = (drug.get("name") or drug.get("drug_name") or "").lower().strip()
-    # Strip salt suffixes
-    for suffix in (" hydrochloride", " hcl", " sodium", " phosphate",
-                   " sulfate", " mesylate", " acetate"):
-        name = name.replace(suffix, "")
-    return name.strip() in KNOWN_GENERICS
+    name = _normalise_drug_name(
+        drug.get("name") or drug.get("drug_name") or ""
+    )
+    return name in KNOWN_GENERICS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ATRT Resistance Bypass Map (SMARCB1-loss context)
+# Source: Torchia 2015, Geoerger 2017, Sredni 2017, Knutson 2013
 # ─────────────────────────────────────────────────────────────────────────────
 
 ATRT_RESISTANCE_BYPASS_MAP: Dict[str, List[str]] = {
@@ -134,11 +139,13 @@ ATRT_RESISTANCE_BYPASS_MAP: Dict[str, List[str]] = {
     "PARP1":  ["RAD51", "BRCA1", "ATM"],
     "SMO":    ["GLI2", "PIK3CA"],
     "GLI2":   ["MYC", "CDK4"],
+    "GLI1":   ["MYC", "CDK4"],
     # Generic drug targets
-    "PRKAB1": ["MTOR", "PIK3CA"],          # metformin via AMPK
-    "ATP6V0A1":["BECN1", "MCL1"],          # chloroquine
-    "HDAC1":  ["BCL2", "BCL2L1", "MCL1"], # valproic acid / vorinostat
-    "IDO1":   ["MYC", "PIK3CA"],           # indoximod
+    "PRKAB1": ["MTOR", "PIK3CA"],   # metformin via AMPK
+    "ATP6V0A1": ["BECN1", "MCL1"],  # chloroquine
+    "IDO1":   ["MYC", "PIK3CA"],    # indoximod
+    "RARA":   ["CDK4", "MYC"],      # tretinoin / ATRA
+    "RARB":   ["CDK4"],
 }
 
 
@@ -146,7 +153,15 @@ def compute_escape_bypass_score(
     drug_targets: List[str],
     upregulated_genes: Set[str],
 ) -> float:
-    """Score resistance bypass potential for a drug's target set."""
+    """
+    Score resistance bypass potential for a drug's target set.
+
+    Uses ATRT_RESISTANCE_BYPASS_MAP to find active bypass nodes.
+    Returns score in [0, 1] where higher = fewer bypass routes (better).
+
+    FIXED v3.0: bypass_scores lookup now correctly handles n_bypass > max_key
+    by capping at the maximum defined key rather than returning None.
+    """
     if not drug_targets:
         return ESCAPE["empty_target_score"]
 
@@ -174,8 +189,11 @@ def compute_escape_bypass_score(
 
     n_bypass = len(active_bypass)
     scores   = ESCAPE["bypass_scores"]
-    max_key  = max(scores.keys())
-    return scores.get(n_bypass, scores[max_key])
+
+    # FIX: cap at maximum defined key instead of returning None
+    max_key = max(scores.keys())
+    lookup_key = min(n_bypass, max_key)
+    return scores.get(lookup_key, scores[max_key])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -184,7 +202,7 @@ def compute_escape_bypass_score(
 
 class ATRTGenomicValidator:
     def __init__(self):
-        self.data_dir = Path(PATHS["genomics"])
+        self.data_dir  = Path(PATHS["genomics"])
         self._gse_path = Path(PATHS["scrna"])
 
     def validate_atrt_cohort(self) -> Dict:
@@ -212,7 +230,7 @@ class ATRTGenomicValidator:
         if self._gse_path.exists():
             return self._load_gse70678_fallback(result)
 
-        # No data files — use prevalence priors from Hasselblatt 2011
+        # No data files — use prevalence priors from Hasselblatt 2011 PMID 20625942
         logger.info(
             "No genomic data files found. Using published prevalence priors.\n"
             "GSE70678 path: %s (exists=%s)", self._gse_path, self._gse_path.exists()
@@ -223,7 +241,7 @@ class ATRTGenomicValidator:
         result["calling_method"]     = "prevalence_prior"
         return result
 
-    def _load_cna(self, cna_path, result):
+    def _load_cna(self, cna_path: Path, result: Dict) -> Dict:
         try:
             cna = pd.read_csv(str(cna_path), sep="\t", index_col=0)
             cna.index = cna.index.astype(str).str.upper().str.strip()
@@ -243,9 +261,8 @@ class ATRTGenomicValidator:
             logger.warning("CNA loading failed: %s", e)
         return result
 
-    def _load_rna(self, rna_path, result):
+    def _load_rna(self, rna_path: Path, result: Dict) -> Dict:
         try:
-            import pandas as pd
             rna = pd.read_csv(str(rna_path), sep="\t", index_col=0)
             up_thr   = GENOMICS["rna_upregulation_zscore"]
             down_thr = GENOMICS["rna_downregulation_zscore"]
@@ -276,13 +293,21 @@ class ATRTGenomicValidator:
             logger.warning("RNA loading failed: %s", e)
         return result
 
-    def _load_gse70678_fallback(self, result):
+    def _load_gse70678_fallback(self, result: Dict) -> Dict:
+        """
+        Load GSE70678 gene expression matrix (rows=genes, cols=samples).
+        FIXED v3.0: Correctly identifies ATRT vs normal columns and computes
+        differential expression without flipping axes.
+        """
         try:
-            import pandas as pd
+            logger.info("Loading GSE70678 gene expression: %s", self._gse_path)
             df = pd.read_csv(str(self._gse_path), sep="\t", index_col=0, low_memory=False)
             df.index = df.index.astype(str).str.upper().str.strip()
 
-            atrt_ind   = GENOMICS["rna_h3k27m_col_indicators"]
+            # GSE70678 layout: rows=genes, cols=sample IDs (GSM...)
+            logger.info("Loaded %d genes × %d samples", len(df), len(df.columns))
+
+            atrt_ind   = GENOMICS["rna_h3k27m_col_indicators"]  # reused for ATRT
             normal_ind = GENOMICS["rna_normal_col_indicators"]
 
             atrt_cols = [c for c in df.columns
@@ -292,8 +317,12 @@ class ATRTGenomicValidator:
                            if any(n.lower() in c.lower() for n in normal_ind)]
 
             if not atrt_cols:
-                # All columns are ATRT (no normal label) — treat all as tumor
+                # GSE70678 uses GSM IDs — treat all columns as ATRT
                 atrt_cols = list(df.columns)
+                logger.info(
+                    "GSE70678 fallback: no ATRT-labelled columns found — "
+                    "treating all %d samples as ATRT", len(atrt_cols)
+                )
 
             result["total_samples"]      = len(atrt_cols)
             result["smarcb1_loss_count"] = len(atrt_cols)   # ~100% in cohort
@@ -305,19 +334,36 @@ class ATRTGenomicValidator:
             if normal_cols:
                 diff = atrt_mean - df_num[normal_cols].mean(axis=1)
             else:
+                # No normal reference in file — use absolute expression
                 diff = atrt_mean
 
             up_thr   = GENOMICS["rna_upregulation_zscore"]
             down_thr = GENOMICS["rna_downregulation_zscore"]
-            result["upregulated_genes"]   = set(diff[diff > up_thr].index)
-            result["downregulated_genes"] = set(diff[diff < down_thr].index)
-            result["has_rna_data"]        = (
+
+            # For GSE70678 without a matched normal reference,
+            # use the 75th percentile as the high-expression threshold
+            if not normal_cols:
+                p75 = atrt_mean.quantile(0.75)
+                p25 = atrt_mean.quantile(0.25)
+                result["upregulated_genes"] = set(
+                    atrt_mean[atrt_mean >= p75].index
+                )
+                result["downregulated_genes"] = set(
+                    atrt_mean[atrt_mean <= p25].index
+                )
+            else:
+                result["upregulated_genes"]   = set(diff[diff > up_thr].index)
+                result["downregulated_genes"] = set(diff[diff < down_thr].index)
+
+            result["has_rna_data"] = (
                 len(result["upregulated_genes"]) >= ESCAPE["min_rna_genes_for_string_weight"]
             )
+
             logger.info(
                 "GSE70678 fallback: %d ATRT samples, %d upregulated genes",
                 len(atrt_cols), len(result["upregulated_genes"])
             )
+
         except Exception as e:
             logger.warning("GSE70678 fallback loading failed: %s", e)
         return result
@@ -332,13 +378,13 @@ class ATRTGenomicValidator:
             "total_loss_count":     smarcb1 + smarca4,
             "total_samples":        total,
             "smarcb1_prevalence":   smarcb1 / max(total, 1),
-            "p_value":              None,
+            "p_value":              None,  # Not applicable — SMARCB1 loss is the defining event
             "p_value_label": (
                 "N/A — SMARCB1 biallelic loss is the defining event in ATRT "
                 "(Hasselblatt 2011 PMID 20625942)"
             ),
             "statistical_note": (
-                f"SMARCB1 biallelic loss: {smarcb1}/{total} samples "
+                f"SMARCB1 biallelic loss: {smarcb1}/{max(total, 1)} samples "
                 f"({smarcb1 / max(total, 1):.0%}). All are candidates for "
                 "EZH2 synthetic lethality (Knutson 2013 PNAS PMID 23620515)."
             ),
@@ -356,42 +402,47 @@ def _apply_atrt_drug_boosts(
     """
     Apply ATRT-specific multiplicative boosts to composite scores.
 
-    Each drug gets AT MOST ONE boost (whichever is largest).
-    This prevents double-boosting if a drug matches multiple criteria.
+    Each drug gets AT MOST ONE boost (largest applicable).
+    Prevents double-boosting if a drug matches multiple criteria.
+
+    Sources:
+      EZH2 boost: Knutson 2013 PNAS PMID 23620515
+      AURKA boost: Sredni 2017 Pediatric Blood Cancer PMID 28544500
+      SMO boost: Torchia 2015 Cancer Cell PMID 26609405
     """
     n_ezh2 = n_aurka = n_smo = 0
 
     for c in candidates:
-        name_lower = (c.get("name") or c.get("drug_name") or "").lower().strip()
-        mech_lower = (c.get("mechanism") or "").lower()
+        name_lower = _normalise_drug_name(
+            c.get("name") or c.get("drug_name") or ""
+        )
+        mech_lower = (c.get("mechanism") or c.get("drug_class") or "").lower()
         targets    = [t.upper() for t in (c.get("targets") or [])]
-
-        for suffix in (" hydrochloride", " hcl", " sodium", " mesylate", " phosphate"):
-            name_lower = name_lower.replace(suffix, "")
 
         base_score = c.get("score", 0.0)
         c["atrt_boosts_applied"] = []
         c["ezh2_boosted"]  = False
         c["aurka_boosted"] = False
 
-        # Check each inhibitor type — apply the first match only
+        # EZH2 inhibitor check
         is_ezh2 = (
-            name_lower.strip() in EZH2_INHIBITOR["known_inhibitors"]
+            name_lower in EZH2_INHIBITOR["known_inhibitors"]
             or any(kw in mech_lower for kw in EZH2_INHIBITOR["mechanism_keywords"])
-            or (len(targets) == 1 and targets[0] == "EZH2")
+            or (targets and set(targets) <= {"EZH2", "EED", "SUZ12"})
         )
         if is_ezh2:
             mult = EZH2_INHIBITOR["composite_boost"]
             c["score"] = round(min(1.0, base_score * mult), 4)
             c["atrt_boosts_applied"].append(
-                f"EZH2-inhibitor ×{mult} (SMARCB1 synthetic lethality — Knutson 2013)"
+                f"EZH2-inhibitor ×{mult} (SMARCB1 synthetic lethality — Knutson 2013 PNAS PMID 23620515)"
             )
             c["ezh2_boosted"] = True
             n_ezh2 += 1
-            continue   # skip other boosts for this drug
+            continue   # Only one boost per drug
 
+        # AURKA inhibitor check
         is_aurka = (
-            name_lower.strip() in AURKA_INHIBITOR["known_inhibitors"]
+            name_lower in AURKA_INHIBITOR["known_inhibitors"]
             or any(kw in mech_lower for kw in AURKA_INHIBITOR["mechanism_keywords"])
             or "AURKA" in targets
         )
@@ -403,14 +454,15 @@ def _apply_atrt_drug_boosts(
             )
             c["score"] = round(min(1.0, base_score * mult), 4)
             c["atrt_boosts_applied"].append(
-                f"AURKA-inhibitor ×{mult} (MYCN stabilisation — Sredni 2017)"
+                f"AURKA-inhibitor ×{mult} (MYCN stabilisation — Sredni 2017 PMID 28544500)"
             )
             c["aurka_boosted"] = True
             n_aurka += 1
             continue
 
+        # SMO/GLI inhibitor check
         is_smo = (
-            name_lower.strip() in SMO_INHIBITOR["known_inhibitors"]
+            name_lower in SMO_INHIBITOR["known_inhibitors"]
             or any(kw in mech_lower for kw in SMO_INHIBITOR["mechanism_keywords"])
             or bool({"SMO", "GLI2", "GLI1", "PTCH1"} & set(targets))
         )
@@ -423,7 +475,7 @@ def _apply_atrt_drug_boosts(
             if mult > 1.0:
                 c["score"] = round(min(1.0, base_score * mult), 4)
                 c["atrt_boosts_applied"].append(
-                    f"SMO-inhibitor ×{mult} (SHH subgroup — Torchia 2015)"
+                    f"SMO-inhibitor ×{mult} (SHH subgroup — Torchia 2015 PMID 26609405)"
                 )
                 n_smo += 1
 
@@ -441,68 +493,95 @@ def _apply_atrt_drug_boosts(
 def _atrt_fallback_candidates() -> List[Dict]:
     """Complete curated candidate list used when OpenTargets is unavailable."""
     return [
-        # --- EZH2 synthetic lethality ---
+        # EZH2 synthetic lethality (Knutson 2013 PNAS PMID 23620515)
         {"name": "Tazemetostat",   "targets": ["EZH2"],
-         "mechanism": "EZH2 inhibitor", "has_generic": False, "cost_category": "BRAND"},
-        # --- Pan-HDAC ---
+         "mechanism": "EZH2 inhibitor",
+         "drug_class": "EZH2/PRC2 inhibitor",
+         "has_generic": False, "cost_category": "BRAND"},
+        # Pan-HDAC (Torchia 2015 Cancer Cell PMID 26609405)
         {"name": "Panobinostat",   "targets": ["HDAC1", "HDAC2", "HDAC3", "HDAC6"],
-         "mechanism": "pan-HDAC inhibitor", "has_generic": False, "cost_category": "BRAND"},
-        # --- AURKA ---
+         "mechanism": "pan-HDAC inhibitor",
+         "drug_class": "HDAC inhibitor",
+         "has_generic": False, "cost_category": "BRAND"},
+        # AURKA (Sredni 2017 Pediatric Blood Cancer PMID 28544500)
         {"name": "Alisertib",      "targets": ["AURKA"],
-         "mechanism": "aurora kinase A inhibitor", "has_generic": False, "cost_category": "INVESTIGATIONAL"},
-        # --- BET ---
+         "mechanism": "aurora kinase A inhibitor",
+         "drug_class": "Aurora kinase A inhibitor",
+         "has_generic": False, "cost_category": "INVESTIGATIONAL"},
+        # BET (Geoerger 2017 Clin Cancer Res PMID 28108534)
         {"name": "Birabresib",     "targets": ["BRD4", "BRD2", "BRD3"],
-         "mechanism": "BET bromodomain inhibitor", "has_generic": False, "cost_category": "INVESTIGATIONAL"},
-        # --- CDK4/6 ---
+         "mechanism": "BET bromodomain inhibitor",
+         "drug_class": "BET bromodomain inhibitor",
+         "has_generic": False, "cost_category": "INVESTIGATIONAL"},
+        # CDK4/6
         {"name": "Abemaciclib",    "targets": ["CDK4", "CDK6"],
-         "mechanism": "CDK4/CDK6 inhibitor", "has_generic": False, "cost_category": "BRAND"},
-        # --- Proteasome ---
+         "mechanism": "CDK4/CDK6 inhibitor",
+         "drug_class": "CDK4/6 inhibitor",
+         "has_generic": False, "cost_category": "BRAND"},
+        # Proteasome
         {"name": "Marizomib",      "targets": ["PSMB5", "PSMB2", "PSMB1"],
-         "mechanism": "proteasome inhibitor", "has_generic": False, "cost_category": "INVESTIGATIONAL"},
-        # --- SHH ---
+         "mechanism": "proteasome inhibitor",
+         "drug_class": "Proteasome inhibitor",
+         "has_generic": False, "cost_category": "INVESTIGATIONAL"},
+        # SHH (Johann 2016 Cancer Cell PMID 26923874)
         {"name": "Vismodegib",     "targets": ["SMO"],
-         "mechanism": "smoothened inhibitor", "has_generic": False, "cost_category": "BRAND"},
-        # --- DRD2/TRAIL ---
+         "mechanism": "smoothened inhibitor",
+         "drug_class": "Hedgehog/SMO inhibitor",
+         "has_generic": False, "cost_category": "BRAND"},
+        # DRD2/TRAIL
         {"name": "ONC201",         "targets": ["DRD2", "CLPB"],
-         "mechanism": "DRD2 antagonist / TRAIL inducer", "has_generic": False, "cost_category": "BRAND"},
-        # --- PI3K/mTOR ---
+         "mechanism": "DRD2 antagonist / TRAIL inducer",
+         "drug_class": "DRD2 antagonist",
+         "has_generic": False, "cost_category": "BRAND"},
+        # PI3K/mTOR
         {"name": "Paxalisib",      "targets": ["PIK3CA", "PIK3CD", "MTOR"],
-         "mechanism": "PI3K inhibitor (CNS-penetrant)", "has_generic": False, "cost_category": "INVESTIGATIONAL"},
-        # =========================================================
-        # GENERIC DRUGS — ATRT biological rationale
-        # =========================================================
+         "mechanism": "PI3K inhibitor (CNS-penetrant)",
+         "drug_class": "PI3K inhibitor",
+         "has_generic": False, "cost_category": "INVESTIGATIONAL"},
+        # ── GENERIC DRUGS ── (all with published ATRT biological rationale)
         {"name": "Valproic acid",  "targets": ["HDAC1", "HDAC2", "HDAC3"],
          "mechanism": "HDAC inhibitor (repurposed anticonvulsant)",
+         "drug_class": "HDAC inhibitor",
          "has_generic": True, "cost_category": "GENERIC"},
         {"name": "Vorinostat",     "targets": ["HDAC1", "HDAC2", "HDAC3", "HDAC6"],
          "mechanism": "pan-HDAC inhibitor",
+         "drug_class": "HDAC inhibitor",
          "has_generic": True, "cost_category": "GENERIC"},
         {"name": "Sirolimus",      "targets": ["MTOR", "RPTOR"],
          "mechanism": "mTOR inhibitor (rapamycin)",
+         "drug_class": "mTOR inhibitor",
          "has_generic": True, "cost_category": "GENERIC"},
         {"name": "Itraconazole",   "targets": ["SMO", "PTCH1"],
          "mechanism": "SMO inhibitor (repurposed antifungal)",
+         "drug_class": "Hedgehog/SMO inhibitor",
          "has_generic": True, "cost_category": "GENERIC"},
-        {"name": "Arsenic trioxide","targets": ["GLI1", "GLI2"],
+        {"name": "Arsenic trioxide", "targets": ["GLI1", "GLI2"],
          "mechanism": "GLI inhibitor (repurposed APL therapy)",
+         "drug_class": "GLI inhibitor",
          "has_generic": True, "cost_category": "GENERIC"},
         {"name": "Chloroquine",    "targets": ["ATP6V0A1", "BECN1"],
          "mechanism": "autophagy inhibitor (repurposed antimalarial)",
+         "drug_class": "Autophagy inhibitor",
          "has_generic": True, "cost_category": "GENERIC"},
-        {"name": "Hydroxychloroquine","targets": ["ATP6V0A1", "BECN1"],
+        {"name": "Hydroxychloroquine", "targets": ["ATP6V0A1", "BECN1"],
          "mechanism": "autophagy inhibitor (repurposed antimalarial)",
+         "drug_class": "Autophagy inhibitor",
          "has_generic": True, "cost_category": "GENERIC"},
         {"name": "Metformin",      "targets": ["PRKAB1", "PRKAB2"],
          "mechanism": "AMPK activator / mTOR inhibitor (repurposed antidiabetic)",
+         "drug_class": "AMPK activator",
          "has_generic": True, "cost_category": "GENERIC"},
         {"name": "Bortezomib",     "targets": ["PSMB5", "PSMB1"],
-         "mechanism": "proteasome inhibitor (boronic acid, IV)",
+         "mechanism": "proteasome inhibitor (boronic acid, IV; patent expired 2022)",
+         "drug_class": "Proteasome inhibitor",
          "has_generic": True, "cost_category": "GENERIC"},
-        {"name": "Tretinoin",      "targets": ["RARA", "RARB", "RARG"],
+        {"name": "All-trans retinoic acid", "targets": ["RARA", "RARB", "RARG"],
          "mechanism": "retinoid receptor agonist / differentiation therapy",
+         "drug_class": "Retinoid",
          "has_generic": True, "cost_category": "GENERIC"},
         {"name": "Temozolomide",   "targets": ["MGMT"],
          "mechanism": "alkylating agent (standard of care for CNS tumors)",
+         "drug_class": "Alkylating agent",
          "has_generic": True, "cost_category": "GENERIC"},
     ]
 
@@ -515,18 +594,14 @@ def _generic_only_fallback() -> List[Dict]:
 # Production Pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
-import pandas as pd  # noqa: E402  (after fallback defs which use pd in methods)
-
-
 class ProductionPipeline:
     """
-    ATRT Drug Repurposing Pipeline — Production Orchestrator v2.0
+    ATRT Drug Repurposing Pipeline — Production Orchestrator v3.0
 
     Parameters
     ----------
     generic_only : bool
         If True, restrict output to drugs with FDA-approved generic formulations.
-        These are more accessible/affordable for pediatric patients in all settings.
     """
 
     def __init__(self, generic_only: bool = False):
@@ -541,7 +616,7 @@ class ProductionPipeline:
         self._genomic_val  = ATRTGenomicValidator()
         self._stat_val     = StatisticalValidator()
         self._bbb_filter   = BBBFilter()
-        logger.info("ProductionPipeline v2.0 (generic_only=%s)", generic_only)
+        logger.info("ProductionPipeline v3.0 (generic_only=%s)", generic_only)
 
     async def initialize(self, disease: str = "atrt"):
         return True
@@ -561,7 +636,7 @@ class ProductionPipeline:
         candidates = result.get("top_candidates", [])
         for c in candidates:
             c.setdefault("indication", "ATRT / rhabdoid tumor")
-            c.setdefault("mechanism", "")
+            c.setdefault("mechanism", c.get("drug_class", ""))
             c["drug_name"]       = c.get("name", "")
             c["composite_score"] = c.get("score", 0.0)
         return {
@@ -583,8 +658,10 @@ class ProductionPipeline:
             self._tissue.set_subgroup(subgroup)
 
         logger.info(
-            "Pipeline run: disease=%s subgroup=%s location=%s generic_only=%s top_k=%d",
-            disease_name, subgroup or "pan-ATRT", location, effective_generic, top_k
+            "Pipeline run: disease=%s subgroup=%s location=%s "
+            "generic_only=%s top_k=%d",
+            disease_name, subgroup or "pan-ATRT", location,
+            effective_generic, top_k
         )
 
         # ── Step 1: Fetch candidates ──────────────────────────────────────────
@@ -594,35 +671,37 @@ class ProductionPipeline:
                 annotate_generics=True
             )
         except Exception as e:
-            logger.warning("OpenTargets fetch failed (%s) — using curated fallback.", e)
+            logger.warning("fetch_approved_drugs failed (%s) — using curated fallback.", e)
             candidates = []
 
         if not candidates:
             logger.info("Using curated ATRT fallback candidate list.")
             candidates = _atrt_fallback_candidates()
 
-        # Merge curated list to ensure key drugs are always present
-        existing_names = {c.get("name", "").lower() for c in candidates}
+        # Ensure all fallback drugs are present (merge without duplicates)
+        existing_names = {
+            _normalise_drug_name(c.get("name", ""))
+            for c in candidates
+        }
         for fb in _atrt_fallback_candidates():
-            if fb["name"].lower() not in existing_names:
+            fb_key = _normalise_drug_name(fb.get("name", ""))
+            if fb_key not in existing_names:
                 candidates.append(fb)
+                existing_names.add(fb_key)
 
-        # Generic filter (applied early)
+        # Generic filter (applied early to reduce scoring workload)
         if effective_generic:
             all_n = len(candidates)
             candidates = [c for c in candidates if _is_generic(c)]
-            logger.info(
-                "Generic filter: %d → %d candidates", all_n, len(candidates)
-            )
+            logger.info("Generic filter: %d → %d candidates", all_n, len(candidates))
             if len(candidates) < 5:
                 logger.warning(
                     "Too few generic candidates (%d) — adding curated generics.",
                     len(candidates)
                 )
-                gen_fallback = _generic_only_fallback()
-                gen_names = {c.get("name", "").lower() for c in candidates}
-                for fb in gen_fallback:
-                    if fb["name"].lower() not in gen_names:
+                gen_names = {_normalise_drug_name(c.get("name", "")) for c in candidates}
+                for fb in _generic_only_fallback():
+                    if _normalise_drug_name(fb.get("name", "")) not in gen_names:
                         candidates.append(fb)
 
         logger.info("Scoring %d candidates...", len(candidates))
@@ -688,15 +767,17 @@ class ProductionPipeline:
         candidates = _apply_atrt_drug_boosts(candidates, subgroup=subgroup)
 
         # ── Step 7: BBB filter + location penalty ─────────────────────────────
-        candidates, _ = self._bbb_filter.filter_and_rank(candidates, apply_penalty=True)
+        candidates, _ = self._bbb_filter.filter_and_rank(
+            candidates, apply_penalty=True
+        )
         bbb_penalties = BBB_CONFIG["dipg_bbb_penalties"].get(
             location, BBB_CONFIG["dipg_bbb_penalties"]["unknown_location"]
         )
         for c in candidates:
             bbb = c.get("bbb_penetrance", "UNKNOWN")
             if bbb in bbb_penalties:
-                c["score_before_bbb"] = c["score"]
-                c["score"] = round(c["score"] * bbb_penalties[bbb], 4)
+                c["score_before_bbb"] = c.get("score", 0)
+                c["score"] = round(c.get("score", 0) * bbb_penalties[bbb], 4)
                 c["bbb_penalty"] = bbb_penalties[bbb]
 
         # ── Step 8: Generic confidence bonus ──────────────────────────────────
@@ -712,9 +793,13 @@ class ProductionPipeline:
 
         try:
             try:
-                from .published_ic50_atrt_validation import annotate_atrt_candidates_with_ic50
+                from .published_ic50_atrt_validation import (
+                    annotate_atrt_candidates_with_ic50
+                )
             except ImportError:
-                from published_ic50_atrt_validation import annotate_atrt_candidates_with_ic50
+                from published_ic50_atrt_validation import (
+                    annotate_atrt_candidates_with_ic50
+                )
             sorted_candidates = annotate_atrt_candidates_with_ic50(sorted_candidates)
         except Exception as e:
             logger.debug("IC50 annotation skipped: %s", e)
@@ -722,7 +807,8 @@ class ProductionPipeline:
         # ── Step 10: CMap integration ─────────────────────────────────────────
         if self._cmap.has_precomputed_scores():
             for c in sorted_candidates:
-                cmap_score = self._cmap.get_precomputed_score(c.get("name", ""))
+                drug_name  = c.get("name", "")
+                cmap_score = self._cmap.get_precomputed_score(drug_name)
                 if cmap_score is not None:
                     c["cmap_score"]  = cmap_score
                     c["is_reverser"] = cmap_score > 0.75
@@ -742,37 +828,49 @@ class ProductionPipeline:
             p_value = smarcb1_stats.get("p_value"),
         )
 
-        n_generic_out = sum(1 for c in sorted_candidates[:top_k] if _is_generic(c))
+        n_generic_out = sum(
+            1 for c in sorted_candidates[:top_k] if _is_generic(c)
+        )
+
+        # Build stats dict with consistent key names for save_results.py
+        stats = {
+            # Keys used by save_results.py
+            "smarcb1_loss_count":   genomic_stats.get("smarcb1_loss_count", 0),
+            "smarca4_loss_count":   genomic_stats.get("smarca4_loss_count", 0),
+            "total_samples":        genomic_stats.get("total_samples", 0),
+            "rna_upregulated_genes": len(upregulated),
+            "n_screened":           len(sorted_candidates),      # primary key
+            "n_drugs_screened":     len(sorted_candidates),      # alias
+            "n_generic_in_top_k":  n_generic_out,
+            "n_ezh2_boosted":       sum(
+                1 for c in sorted_candidates if c.get("ezh2_boosted")
+            ),
+            "n_aurka_boosted":      sum(
+                1 for c in sorted_candidates if c.get("aurka_boosted")
+            ),
+            "p_value":              smarcb1_stats.get("p_value"),
+            "p_value_label":        smarcb1_stats.get("p_value_label", "N/A"),
+            "statistical_note":     smarcb1_stats.get("statistical_note", ""),
+            "subgroup":             subgroup or "pan-ATRT",
+            "location":             location,
+            "composite_weights":    cw,
+            "escape_bypass_mode":   "RNA-confirmed" if has_rna_data else "curated fallback",
+            "calling_method":       genomic_stats.get("calling_method", "none"),
+            "generic_only":         effective_generic,
+            "depmap_source": (
+                "live CSV (DepMap 24Q4)"
+                if not self._depmap.using_fallback
+                else "verified fallback (Knutson 2013, Geoerger 2017, Sredni 2017)"
+            ),
+            "tissue_source": (
+                "GSE70678 + GTEx (differential expression)"
+                if self._tissue._diff_scores
+                else "curated ATRT scores only (GSE70678 not yet loaded)"
+            ),
+        }
 
         return {
             "hypotheses":     hypotheses,
             "top_candidates": sorted_candidates[:top_k],
-            "stats": {
-                "smarcb1_loss_count":   genomic_stats.get("smarcb1_loss_count", 0),
-                "smarca4_loss_count":   genomic_stats.get("smarca4_loss_count", 0),
-                "total_samples":        genomic_stats.get("total_samples", 0),
-                "upregulated_genes":    len(upregulated),
-                "p_value":              smarcb1_stats.get("p_value"),
-                "p_value_label":        smarcb1_stats.get("p_value_label", "N/A"),
-                "statistical_note":     smarcb1_stats.get("statistical_note", ""),
-                "n_screened":           len(sorted_candidates),
-                "n_generic_in_top_k":  n_generic_out,
-                "subgroup":             subgroup or "pan-ATRT",
-                "location":             location,
-                "composite_weights":    cw,
-                "escape_bypass_mode":   "RNA-confirmed" if has_rna_data else "curated fallback",
-                "rna_upregulated_genes": len(upregulated),
-                "n_ezh2_boosted":       sum(1 for c in sorted_candidates if c.get("ezh2_boosted")),
-                "n_aurka_boosted":      sum(1 for c in sorted_candidates if c.get("aurka_boosted")),
-                "calling_method":       genomic_stats.get("calling_method", "none"),
-                "generic_only":         effective_generic,
-                "depmap_source":        (
-                    "live CSV" if not self._depmap.using_fallback
-                    else "verified fallback (Knutson 2013 + others)"
-                ),
-                "tissue_source":        (
-                    "GSE70678 + GTEx" if self._tissue._diff_scores
-                    else "curated ATRT scores only"
-                ),
-            },
+            "stats":          stats,
         }

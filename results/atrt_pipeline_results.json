@@ -1,19 +1,23 @@
 {
-  "run_timestamp": "2026-04-11T00:34:31.128476",
+  "run_timestamp": "2026-04-11T00:52:55.977199",
   "disease": "atrt",
   "subgroup": "pan-ATRT",
   "location": "unknown_location",
-  "pipeline_version": "ATRT v2.1",
+  "generic_only": false,
+  "pipeline_version": "ATRT v3.0",
   "stats": {
     "smarcb1_loss_count": 49,
     "smarca4_loss_count": 0,
     "total_atrt_samples": 49,
-    "rna_upregulated_genes": 21726,
+    "total_samples": 49,
+    "rna_upregulated_genes": 5438,
     "p_value_label": "N/A \u2014 SMARCB1 biallelic loss is the defining event in ATRT (Hasselblatt 2011 PMID 20625942)",
     "statistical_note": "SMARCB1 biallelic loss: 49/49 samples (100%). All are candidates for EZH2 synthetic lethality (Knutson 2013 PNAS PMID 23620515).",
-    "n_drugs_screened": 26,
+    "n_drugs_screened": 25,
+    "n_screened": 25,
     "n_ezh2_boosted": 1,
     "n_aurka_boosted": 1,
+    "n_generic_in_top_k": 9,
     "escape_bypass_mode": "RNA-confirmed",
     "composite_weights": {
       "tissue": 0.4,
@@ -23,13 +27,15 @@
     },
     "calling_method": "gse70678_fallback",
     "cmap_loaded": true,
+    "depmap_source": "live CSV (DepMap 24Q4)",
+    "tissue_source": "GSE70678 + GTEx (differential expression)",
     "cmap_note": "Live CMap scores loaded",
     "data_streams_active": [
+      "OpenTargets API (EFO_0002915/0000543 \u2014 live; falls back to curated list if blocked)",
       "DepMap CRISPR (Broad Institute \u2014 ATRT/rhabdoid lines: BT16, BT37, G401, A204)",
-      "GSE70678 bulk RNA-seq (Torchia 2015 \u2014 49 ATRT tumours)",
-      "GTEx v8 normal brain reference",
-      "OpenTargets API (CNS/Oncology drugs \u2014 live)",
-      "FDA/RxNorm generic drug annotation (live)",
+      "GSE70678 bulk RNA-seq (Torchia 2015 Cancer Cell PMID 26609405 \u2014 49 ATRT tumours)",
+      "GTEx v8 normal brain reference (cerebellum + cortex)",
+      "FDA/RxNorm generic drug annotation (live; seed fallback if blocked)",
       "STRING-DB PPI network (live + curated)",
       "ATRT published IC50 validation (BT16/BT37/G401/A204)",
       "CMap L1000 transcriptomic reversal: live scores"
@@ -41,6 +47,7 @@
       "targets": [
         "EZH2"
       ],
+      "mechanism": "EZH2 inhibitor",
       "score": 1.0,
       "tissue_expression_score": 0.8885,
       "depmap_score": 0.5,
@@ -55,7 +62,7 @@
       "ezh2_boosted": true,
       "aurka_boosted": false,
       "atrt_boosts_applied": [
-        "EZH2-inhibitor \u00d71.4 (SMARCB1 synthetic lethality \u2014 Knutson 2013)"
+        "EZH2-inhibitor \u00d71.4 (SMARCB1 synthetic lethality \u2014 Knutson 2013 PNAS PMID 23620515)"
       ],
       "ic50_validated": true,
       "ic50_um": 0.88,
@@ -65,15 +72,14 @@
       "cmap_score": 0.5,
       "is_reverser": false,
       "depmap_note": "Best Chronos: -0.39 (EZH2) \u2192 score 0.50 (CSV)",
-      "sc_context": "GSE70678: curated=0.92\u00d70.55, bulk=0.85\u00d70.45, final=0.89",
-      "escape_note": "STRING+RNA (12 bypass hits)",
-      "mechanism": "EZH2 inhibitor"
+      "escape_note": "STRING+RNA (9 bypass hits)"
     },
     {
       "name": "Alisertib",
       "targets": [
         "AURKA"
       ],
+      "mechanism": "aurora kinase A inhibitor",
       "score": 0.963,
       "tissue_expression_score": 0.8335,
       "depmap_score": 1.0,
@@ -88,7 +94,7 @@
       "ezh2_boosted": false,
       "aurka_boosted": true,
       "atrt_boosts_applied": [
-        "AURKA-inhibitor \u00d71.15 (MYCN stabilisation \u2014 Sredni 2017)"
+        "AURKA-inhibitor \u00d71.15 (MYCN stabilisation \u2014 Sredni 2017 PMID 28544500)"
       ],
       "ic50_validated": true,
       "ic50_um": 0.098,
@@ -98,9 +104,7 @@
       "cmap_score": 0.826,
       "is_reverser": true,
       "depmap_note": "Best Chronos: -1.50 (AURKA) \u2192 score 1.00 (CSV)",
-      "sc_context": "GSE70678: curated=0.82\u00d70.55, bulk=0.85\u00d70.45, final=0.83",
-      "escape_note": "Curated ATRT resistance bypass",
-      "mechanism": "aurora kinase A inhibitor"
+      "escape_note": "Curated ATRT resistance bypass"
     },
     {
       "name": "Panobinostat",
@@ -110,11 +114,12 @@
         "HDAC3",
         "HDAC6"
       ],
-      "score": 0.9062,
+      "mechanism": "pan-HDAC inhibitor",
+      "score": 0.9146,
       "tissue_expression_score": 0.9146,
       "depmap_score": 1.0,
       "ppi_score": 1.0,
-      "escape_bypass_score": 0.702,
+      "escape_bypass_score": 0.744,
       "bbb_penetrance": "HIGH",
       "bbb_score": 1.0,
       "clinical_failure": false,
@@ -132,9 +137,7 @@
       "cmap_score": 0.7943,
       "is_reverser": true,
       "depmap_note": "Best Chronos: -1.26 (HDAC3) \u2192 score 1.00 (CSV)",
-      "sc_context": "GSE70678: curated=0.84\u00d70.55, bulk=1.00\u00d70.45, final=0.91",
-      "escape_note": "STRING+RNA (19 bypass hits)",
-      "mechanism": "pan-HDAC inhibitor"
+      "escape_note": "STRING+RNA (14 bypass hits)"
     },
     {
       "name": "Valproic acid",
@@ -143,11 +146,12 @@
         "HDAC2",
         "HDAC3"
       ],
-      "score": 0.9062,
+      "mechanism": "HDAC inhibitor (repurposed anticonvulsant)",
+      "score": 0.9146,
       "tissue_expression_score": 0.9146,
       "depmap_score": 1.0,
       "ppi_score": 1.0,
-      "escape_bypass_score": 0.702,
+      "escape_bypass_score": 0.744,
       "bbb_penetrance": "HIGH",
       "bbb_score": 1.0,
       "clinical_failure": false,
@@ -165,22 +169,21 @@
       "cmap_score": 0.5,
       "is_reverser": false,
       "depmap_note": "Best Chronos: -1.26 (HDAC3) \u2192 score 1.00 (CSV)",
-      "sc_context": "GSE70678: curated=0.84\u00d70.55, bulk=1.00\u00d70.45, final=0.91",
-      "escape_note": "STRING+RNA (14 bypass hits)",
-      "mechanism": "HDAC inhibitor (repurposed anticonvulsant)"
+      "escape_note": "STRING+RNA (10 bypass hits)"
     },
     {
       "name": "Birabresib",
       "targets": [
+        "BRD4",
         "BRD2",
-        "BRD3",
-        "BRD4"
+        "BRD3"
       ],
-      "score": 0.9033,
+      "mechanism": "BET bromodomain inhibitor",
+      "score": 0.9117,
       "tissue_expression_score": 0.9282,
       "depmap_score": 1.0,
       "ppi_score": 1.0,
-      "escape_bypass_score": 0.66,
+      "escape_bypass_score": 0.702,
       "bbb_penetrance": "MODERATE",
       "bbb_score": 0.7,
       "clinical_failure": false,
@@ -198,17 +201,16 @@
       "cmap_score": 0.5,
       "is_reverser": false,
       "depmap_note": "Best Chronos: -1.05 (BRD4) \u2192 score 1.00 (CSV)",
-      "sc_context": "GSE70678: curated=0.87\u00d70.55, bulk=1.00\u00d70.45, final=0.93",
-      "escape_note": "STRING+RNA (12 bypass hits)",
-      "mechanism": "BET bromodomain inhibitor"
+      "escape_note": "STRING+RNA (8 bypass hits)"
     },
     {
       "name": "Marizomib",
       "targets": [
-        "PSMB1",
+        "PSMB5",
         "PSMB2",
-        "PSMB5"
+        "PSMB1"
       ],
+      "mechanism": "proteasome inhibitor",
       "score": 0.8772,
       "tissue_expression_score": 0.8211,
       "depmap_score": 1.0,
@@ -231,9 +233,7 @@
       "cmap_score": 0.5,
       "is_reverser": false,
       "depmap_note": "Best Chronos: -2.09 (PSMB5) \u2192 score 1.00 (CSV)",
-      "sc_context": "GSE70678: curated=0.67\u00d70.55, bulk=1.00\u00d70.45, final=0.82",
-      "escape_note": "STRING+RNA (16 bypass hits)",
-      "mechanism": "proteasome inhibitor"
+      "escape_note": "STRING+RNA (10 bypass hits)"
     },
     {
       "name": "Abemaciclib",
@@ -241,11 +241,12 @@
         "CDK4",
         "CDK6"
       ],
-      "score": 0.8219,
+      "mechanism": "CDK4/CDK6 inhibitor",
+      "score": 0.8387,
       "tissue_expression_score": 0.8577,
       "depmap_score": 0.8,
       "ppi_score": 1.0,
-      "escape_bypass_score": 0.744,
+      "escape_bypass_score": 0.828,
       "bbb_penetrance": "HIGH",
       "bbb_score": 1.0,
       "clinical_failure": false,
@@ -263,9 +264,7 @@
       "cmap_score": 0.8335,
       "is_reverser": true,
       "depmap_note": "Best Chronos: -0.87 (CDK4) \u2192 score 0.80 (CSV)",
-      "sc_context": "GSE70678: curated=0.79\u00d70.55, bulk=0.94\u00d70.45, final=0.86",
-      "escape_note": "STRING+RNA (12 bypass hits)",
-      "mechanism": "CDK4/CDK6 inhibitor"
+      "escape_note": "STRING+RNA (6 bypass hits)"
     },
     {
       "name": "Entinostat",
@@ -274,17 +273,18 @@
         "HDAC2",
         "HDAC3"
       ],
-      "score": 0.8156,
+      "mechanism": "class I HDAC inhibitor",
+      "score": 0.8231,
       "tissue_expression_score": 0.9146,
       "depmap_score": 1.0,
       "ppi_score": 1.0,
-      "escape_bypass_score": 0.702,
+      "escape_bypass_score": 0.744,
       "bbb_penetrance": "UNKNOWN",
       "bbb_score": 0.45,
       "clinical_failure": false,
       "has_generic": false,
-      "generic_source": "FALLBACK",
-      "cost_category": "INVESTIGATIONAL",
+      "generic_source": "SEED",
+      "cost_category": "BRAND",
       "ezh2_boosted": false,
       "aurka_boosted": false,
       "atrt_boosts_applied": [],
@@ -296,23 +296,22 @@
       "cmap_score": 0.887,
       "is_reverser": true,
       "depmap_note": "Best Chronos: -1.26 (HDAC3) \u2192 score 1.00 (CSV)",
-      "sc_context": "GSE70678: curated=0.84\u00d70.55, bulk=1.00\u00d70.45, final=0.91",
-      "escape_note": "STRING+RNA (14 bypass hits)",
-      "mechanism": "class I HDAC inhibitor"
+      "escape_note": "STRING+RNA (10 bypass hits)"
     },
     {
       "name": "Paxalisib",
       "targets": [
-        "MTOR",
         "PIK3CA",
         "PIK3CD",
-        "PIK3CG"
+        "PIK3CG",
+        "MTOR"
       ],
-      "score": 0.8041,
+      "mechanism": "PI3K inhibitor (CNS-penetrant)",
+      "score": 0.8209,
       "tissue_expression_score": 0.6569,
       "depmap_score": 1.0,
       "ppi_score": 0.85,
-      "escape_bypass_score": 0.744,
+      "escape_bypass_score": 0.828,
       "bbb_penetrance": "HIGH",
       "bbb_score": 1.0,
       "clinical_failure": false,
@@ -330,9 +329,7 @@
       "cmap_score": 0.8539,
       "is_reverser": true,
       "depmap_note": "Best Chronos: -1.42 (MTOR) \u2192 score 1.00 (CSV)",
-      "sc_context": "GSE70678: curated=0.69\u00d70.55, bulk=0.61\u00d70.45, final=0.66",
-      "escape_note": "STRING+RNA (11 bypass hits)",
-      "mechanism": "PI3K inhibitor (CNS-penetrant)"
+      "escape_note": "STRING+RNA (3 bypass hits)"
     },
     {
       "name": "Sirolimus",
@@ -340,11 +337,12 @@
         "MTOR",
         "RPTOR"
       ],
-      "score": 0.7824,
+      "mechanism": "mTOR inhibitor (repurposed immunosuppressant)",
+      "score": 0.7908,
       "tissue_expression_score": 0.5817,
       "depmap_score": 1.0,
       "ppi_score": 0.85,
-      "escape_bypass_score": 0.786,
+      "escape_bypass_score": 0.828,
       "bbb_penetrance": "MODERATE",
       "bbb_score": 0.7,
       "clinical_failure": false,
@@ -362,9 +360,160 @@
       "cmap_score": 0.8847,
       "is_reverser": true,
       "depmap_note": "Best Chronos: -1.42 (MTOR) \u2192 score 1.00 (CSV)",
-      "sc_context": "GSE70678: curated=0.69\u00d70.55, bulk=0.45\u00d70.45, final=0.58",
-      "escape_note": "STRING+RNA (7 bypass hits)",
-      "mechanism": "mTOR inhibitor (repurposed immunosuppressant)"
+      "escape_note": "STRING+RNA (2 bypass hits)"
+    },
+    {
+      "name": "Chloroquine",
+      "targets": [
+        "ATP6V0A1",
+        "BECN1"
+      ],
+      "mechanism": "autophagy inhibitor (repurposed antimalarial)",
+      "score": 0.6563,
+      "tissue_expression_score": 0.7039,
+      "depmap_score": 0.5,
+      "ppi_score": 0.85,
+      "escape_bypass_score": 0.786,
+      "bbb_penetrance": "HIGH",
+      "bbb_score": 1.0,
+      "clinical_failure": false,
+      "has_generic": true,
+      "generic_source": "SEED",
+      "cost_category": "GENERIC",
+      "ezh2_boosted": false,
+      "aurka_boosted": false,
+      "atrt_boosts_applied": [],
+      "ic50_validated": false,
+      "ic50_um": null,
+      "ic50_cell_line": null,
+      "ic50_source": null,
+      "ic50_has_smarcb1_data": false,
+      "cmap_score": 0.84,
+      "is_reverser": true,
+      "depmap_note": "Best Chronos: -0.45 (BECN1) \u2192 score 0.50 (CSV)",
+      "escape_note": "STRING+RNA (2 bypass hits)"
+    },
+    {
+      "name": "Hydroxychloroquine",
+      "targets": [
+        "ATP6V0A1",
+        "BECN1"
+      ],
+      "mechanism": "autophagy inhibitor (repurposed antimalarial)",
+      "score": 0.6563,
+      "tissue_expression_score": 0.7039,
+      "depmap_score": 0.5,
+      "ppi_score": 0.85,
+      "escape_bypass_score": 0.786,
+      "bbb_penetrance": "MODERATE",
+      "bbb_score": 0.7,
+      "clinical_failure": false,
+      "has_generic": true,
+      "generic_source": "SEED",
+      "cost_category": "GENERIC",
+      "ezh2_boosted": false,
+      "aurka_boosted": false,
+      "atrt_boosts_applied": [],
+      "ic50_validated": false,
+      "ic50_um": null,
+      "ic50_cell_line": null,
+      "ic50_source": null,
+      "ic50_has_smarcb1_data": false,
+      "cmap_score": 0.7132,
+      "is_reverser": false,
+      "depmap_note": "Best Chronos: -0.45 (BECN1) \u2192 score 0.50 (CSV)",
+      "escape_note": "STRING+RNA (2 bypass hits)"
+    },
+    {
+      "name": "Vismodegib",
+      "targets": [
+        "SMO"
+      ],
+      "mechanism": "smoothened inhibitor",
+      "score": 0.621,
+      "tissue_expression_score": 0.65,
+      "depmap_score": 0.5,
+      "ppi_score": 0.2,
+      "escape_bypass_score": 0.88,
+      "bbb_penetrance": "MODERATE",
+      "bbb_score": 0.7,
+      "clinical_failure": false,
+      "has_generic": false,
+      "generic_source": "SEED",
+      "cost_category": "BRAND",
+      "ezh2_boosted": false,
+      "aurka_boosted": false,
+      "atrt_boosts_applied": [],
+      "ic50_validated": true,
+      "ic50_um": 2.5,
+      "ic50_cell_line": "BT37",
+      "ic50_source": "Torchia 2015, Cancer Cell supplementary, PMID 26609405",
+      "ic50_has_smarcb1_data": true,
+      "cmap_score": 0.8142,
+      "is_reverser": true,
+      "depmap_note": "Best Chronos: -0.08 (SMO) \u2192 score 0.50 (CSV)",
+      "escape_note": "Curated ATRT resistance bypass"
+    },
+    {
+      "name": "Sonidegib",
+      "targets": [
+        "SMO"
+      ],
+      "mechanism": "smoothened inhibitor",
+      "score": 0.621,
+      "tissue_expression_score": 0.65,
+      "depmap_score": 0.5,
+      "ppi_score": 0.2,
+      "escape_bypass_score": 0.88,
+      "bbb_penetrance": "MODERATE",
+      "bbb_score": 0.7,
+      "clinical_failure": false,
+      "has_generic": false,
+      "generic_source": "SEED",
+      "cost_category": "BRAND",
+      "ezh2_boosted": false,
+      "aurka_boosted": false,
+      "atrt_boosts_applied": [],
+      "ic50_validated": false,
+      "ic50_um": null,
+      "ic50_cell_line": null,
+      "ic50_source": null,
+      "ic50_has_smarcb1_data": false,
+      "cmap_score": 0.8797,
+      "is_reverser": true,
+      "depmap_note": "Best Chronos: -0.08 (SMO) \u2192 score 0.50 (CSV)",
+      "escape_note": "Curated ATRT resistance bypass"
+    },
+    {
+      "name": "Itraconazole",
+      "targets": [
+        "SMO",
+        "PTCH1"
+      ],
+      "mechanism": "SMO inhibitor (repurposed antifungal)",
+      "score": 0.6128,
+      "tissue_expression_score": 0.6295,
+      "depmap_score": 0.5,
+      "ppi_score": 0.2,
+      "escape_bypass_score": 0.88,
+      "bbb_penetrance": "MODERATE",
+      "bbb_score": 0.7,
+      "clinical_failure": false,
+      "has_generic": true,
+      "generic_source": "SEED",
+      "cost_category": "GENERIC",
+      "ezh2_boosted": false,
+      "aurka_boosted": false,
+      "atrt_boosts_applied": [],
+      "ic50_validated": false,
+      "ic50_um": null,
+      "ic50_cell_line": null,
+      "ic50_source": null,
+      "ic50_has_smarcb1_data": false,
+      "cmap_score": 0.7905,
+      "is_reverser": true,
+      "depmap_note": "Best Chronos: -0.08 (SMO) \u2192 score 0.50 (CSV)",
+      "escape_note": "Curated ATRT resistance bypass"
     },
     {
       "name": "Arsenic trioxide",
@@ -372,6 +521,7 @@
         "GLI1",
         "GLI2"
       ],
+      "mechanism": "GLI inhibitor (repurposed from APL therapy)",
       "score": 0.6046,
       "tissue_expression_score": 0.6689,
       "depmap_score": 0.5,
@@ -394,165 +544,7 @@
       "cmap_score": 0.8986,
       "is_reverser": true,
       "depmap_note": "Best Chronos: -0.39 (GLI1) \u2192 score 0.50 (CSV)",
-      "sc_context": "GSE70678: curated=0.71\u00d70.55, bulk=0.61\u00d70.45, final=0.67",
-      "escape_note": "Curated ATRT resistance bypass",
-      "mechanism": "GLI inhibitor (repurposed from APL therapy)"
-    },
-    {
-      "name": "Vismodegib",
-      "targets": [
-        "SMO"
-      ],
-      "score": 0.597,
-      "tissue_expression_score": 0.65,
-      "depmap_score": 0.5,
-      "ppi_score": 0.2,
-      "escape_bypass_score": 0.76,
-      "bbb_penetrance": "MODERATE",
-      "bbb_score": 0.7,
-      "clinical_failure": false,
-      "has_generic": false,
-      "generic_source": "SEED",
-      "cost_category": "BRAND",
-      "ezh2_boosted": false,
-      "aurka_boosted": false,
-      "atrt_boosts_applied": [],
-      "ic50_validated": true,
-      "ic50_um": 2.5,
-      "ic50_cell_line": "BT37",
-      "ic50_source": "Torchia 2015, Cancer Cell supplementary, PMID 26609405",
-      "ic50_has_smarcb1_data": true,
-      "cmap_score": 0.8142,
-      "is_reverser": true,
-      "depmap_note": "Best Chronos: -0.08 (SMO) \u2192 score 0.50 (CSV)",
-      "sc_context": "GSE70678: curated=0.65\u00d70.55, bulk=0.65\u00d70.45, final=0.65",
-      "escape_note": "Curated ATRT resistance bypass",
-      "mechanism": "smoothened inhibitor"
-    },
-    {
-      "name": "Sonidegib",
-      "targets": [
-        "SMO"
-      ],
-      "score": 0.597,
-      "tissue_expression_score": 0.65,
-      "depmap_score": 0.5,
-      "ppi_score": 0.2,
-      "escape_bypass_score": 0.76,
-      "bbb_penetrance": "MODERATE",
-      "bbb_score": 0.7,
-      "clinical_failure": false,
-      "has_generic": false,
-      "generic_source": "FDA_NDA",
-      "cost_category": "BRAND",
-      "ezh2_boosted": false,
-      "aurka_boosted": false,
-      "atrt_boosts_applied": [],
-      "ic50_validated": false,
-      "ic50_um": null,
-      "ic50_cell_line": null,
-      "ic50_source": null,
-      "ic50_has_smarcb1_data": false,
-      "cmap_score": 0.8797,
-      "is_reverser": true,
-      "depmap_note": "Best Chronos: -0.08 (SMO) \u2192 score 0.50 (CSV)",
-      "sc_context": "GSE70678: curated=0.65\u00d70.55, bulk=0.65\u00d70.45, final=0.65",
-      "escape_note": "Curated ATRT resistance bypass",
-      "mechanism": "smoothened inhibitor"
-    },
-    {
-      "name": "Itraconazole",
-      "targets": [
-        "PTCH1",
-        "SMO"
-      ],
-      "score": 0.5888,
-      "tissue_expression_score": 0.6295,
-      "depmap_score": 0.5,
-      "ppi_score": 0.2,
-      "escape_bypass_score": 0.76,
-      "bbb_penetrance": "MODERATE",
-      "bbb_score": 0.7,
-      "clinical_failure": false,
-      "has_generic": true,
-      "generic_source": "SEED",
-      "cost_category": "GENERIC",
-      "ezh2_boosted": false,
-      "aurka_boosted": false,
-      "atrt_boosts_applied": [],
-      "ic50_validated": false,
-      "ic50_um": null,
-      "ic50_cell_line": null,
-      "ic50_source": null,
-      "ic50_has_smarcb1_data": false,
-      "cmap_score": 0.7905,
-      "is_reverser": true,
-      "depmap_note": "Best Chronos: -0.08 (SMO) \u2192 score 0.50 (CSV)",
-      "sc_context": "GSE70678: curated=0.64\u00d70.55, bulk=0.61\u00d70.45, final=0.63",
-      "escape_note": "Curated ATRT resistance bypass",
-      "mechanism": "SMO inhibitor (repurposed antifungal)"
-    },
-    {
-      "name": "Chloroquine",
-      "targets": [
-        "ATP6V0A1"
-      ],
-      "score": 0.5816,
-      "tissue_expression_score": 0.6115,
-      "depmap_score": 0.5,
-      "ppi_score": 0.2,
-      "escape_bypass_score": 0.76,
-      "bbb_penetrance": "HIGH",
-      "bbb_score": 1.0,
-      "clinical_failure": false,
-      "has_generic": true,
-      "generic_source": "SEED",
-      "cost_category": "GENERIC",
-      "ezh2_boosted": false,
-      "aurka_boosted": false,
-      "atrt_boosts_applied": [],
-      "ic50_validated": false,
-      "ic50_um": null,
-      "ic50_cell_line": null,
-      "ic50_source": null,
-      "ic50_has_smarcb1_data": false,
-      "cmap_score": 0.84,
-      "is_reverser": true,
-      "depmap_note": "Best Chronos: -0.23 (ATP6V0A1) \u2192 score 0.50 (CSV)",
-      "sc_context": "GSE70678: curated=0.58\u00d70.55, bulk=0.65\u00d70.45, final=0.61",
-      "escape_note": "Curated ATRT resistance bypass",
-      "mechanism": "autophagy inhibitor (repurposed antimalarial)"
-    },
-    {
-      "name": "Hydroxychloroquine",
-      "targets": [
-        "ATP6V0A1"
-      ],
-      "score": 0.5816,
-      "tissue_expression_score": 0.6115,
-      "depmap_score": 0.5,
-      "ppi_score": 0.2,
-      "escape_bypass_score": 0.76,
-      "bbb_penetrance": "MODERATE",
-      "bbb_score": 0.7,
-      "clinical_failure": false,
-      "has_generic": true,
-      "generic_source": "SEED",
-      "cost_category": "GENERIC",
-      "ezh2_boosted": false,
-      "aurka_boosted": false,
-      "atrt_boosts_applied": [],
-      "ic50_validated": false,
-      "ic50_um": null,
-      "ic50_cell_line": null,
-      "ic50_source": null,
-      "ic50_has_smarcb1_data": false,
-      "cmap_score": 0.7132,
-      "is_reverser": false,
-      "depmap_note": "Best Chronos: -0.23 (ATP6V0A1) \u2192 score 0.50 (CSV)",
-      "sc_context": "GSE70678: curated=0.58\u00d70.55, bulk=0.65\u00d70.45, final=0.61",
-      "escape_note": "Curated ATRT resistance bypass",
-      "mechanism": "autophagy inhibitor (repurposed antimalarial)"
+      "escape_note": "Curated ATRT resistance bypass"
     },
     {
       "name": "Metformin",
@@ -560,11 +552,12 @@
         "PRKAB1",
         "PRKAB2"
       ],
-      "score": 0.5738,
+      "mechanism": "AMPK activator (repurposed antidiabetic)",
+      "score": 0.5978,
       "tissue_expression_score": 0.5921,
       "depmap_score": 0.5,
       "ppi_score": 0.2,
-      "escape_bypass_score": 0.76,
+      "escape_bypass_score": 0.88,
       "bbb_penetrance": "MODERATE",
       "bbb_score": 0.7,
       "clinical_failure": false,
@@ -582,16 +575,15 @@
       "cmap_score": 0.8538,
       "is_reverser": true,
       "depmap_note": "Best Chronos: -0.17 (PRKAB2) \u2192 score 0.50 (CSV)",
-      "sc_context": "GSE70678: curated=0.54\u00d70.55, bulk=0.65\u00d70.45, final=0.59",
-      "escape_note": "Curated ATRT resistance bypass",
-      "mechanism": "AMPK activator (repurposed antidiabetic)"
+      "escape_note": "Curated ATRT resistance bypass"
     },
     {
       "name": "Bortezomib",
       "targets": [
-        "PSMB1",
-        "PSMB5"
+        "PSMB5",
+        "PSMB1"
       ],
+      "mechanism": "proteasome inhibitor (boronic acid)",
       "score": 0.5695,
       "tissue_expression_score": 0.8182,
       "depmap_score": 1.0,
@@ -614,9 +606,7 @@
       "cmap_score": 0.8937,
       "is_reverser": true,
       "depmap_note": "Best Chronos: -2.09 (PSMB5) \u2192 score 1.00 (CSV)",
-      "sc_context": "GSE70678: curated=0.67\u00d70.55, bulk=1.00\u00d70.45, final=0.82",
-      "escape_note": "STRING+RNA (16 bypass hits)",
-      "mechanism": "proteasome inhibitor (boronic acid)"
+      "escape_note": "STRING+RNA (10 bypass hits)"
     },
     {
       "name": "Vorinostat",
@@ -626,11 +616,12 @@
         "HDAC3",
         "HDAC6"
       ],
-      "score": 0.5437,
+      "mechanism": "pan-HDAC inhibitor",
+      "score": 0.5488,
       "tissue_expression_score": 0.9146,
       "depmap_score": 1.0,
       "ppi_score": 1.0,
-      "escape_bypass_score": 0.702,
+      "escape_bypass_score": 0.744,
       "bbb_penetrance": "MODERATE",
       "bbb_score": 0.2,
       "clinical_failure": true,
@@ -648,16 +639,15 @@
       "cmap_score": 0.862,
       "is_reverser": true,
       "depmap_note": "Best Chronos: -1.26 (HDAC3) \u2192 score 1.00 (CSV)",
-      "sc_context": "GSE70678: curated=0.84\u00d70.55, bulk=1.00\u00d70.45, final=0.91",
-      "escape_note": "STRING+RNA (19 bypass hits)",
-      "mechanism": "pan-HDAC inhibitor"
+      "escape_note": "STRING+RNA (14 bypass hits)"
     },
     {
       "name": "ONC201",
       "targets": [
-        "CLPB",
-        "DRD2"
+        "DRD2",
+        "CLPB"
       ],
+      "mechanism": "DRD2 antagonist / TRAIL inducer",
       "score": 0.5212,
       "tissue_expression_score": 0.4756,
       "depmap_score": 0.5,
@@ -680,9 +670,7 @@
       "cmap_score": 0.5,
       "is_reverser": false,
       "depmap_note": "Best Chronos: -0.20 (CLPB) \u2192 score 0.50 (CSV)",
-      "sc_context": "GSE70678: curated=0.50\u00d70.55, bulk=0.45\u00d70.45, final=0.48",
-      "escape_note": "STRING+RNA (7 bypass hits)",
-      "mechanism": "DRD2 antagonist / TRAIL inducer"
+      "escape_note": "STRING+RNA (1 bypass hits)"
     }
   ],
   "confidence_breakdown": {
@@ -783,7 +771,7 @@
     {
       "rank": 3,
       "drug": "Panobinostat",
-      "score": 0.906,
+      "score": 0.915,
       "bbb": "HIGH",
       "depmap": 1.0,
       "tissue": 0.915,
@@ -797,7 +785,7 @@
     {
       "rank": 4,
       "drug": "Valproic acid",
-      "score": 0.906,
+      "score": 0.915,
       "bbb": "HIGH",
       "depmap": 1.0,
       "tissue": 0.915,
@@ -811,7 +799,7 @@
     {
       "rank": 5,
       "drug": "Birabresib",
-      "score": 0.903,
+      "score": 0.912,
       "bbb": "MODERATE",
       "depmap": 1.0,
       "tissue": 0.928,
@@ -839,7 +827,7 @@
     {
       "rank": 7,
       "drug": "Abemaciclib",
-      "score": 0.822,
+      "score": 0.839,
       "bbb": "HIGH",
       "depmap": 0.8,
       "tissue": 0.858,
@@ -853,7 +841,7 @@
     {
       "rank": 8,
       "drug": "Entinostat",
-      "score": 0.816,
+      "score": 0.823,
       "bbb": "UNKNOWN",
       "depmap": 1.0,
       "tissue": 0.915,
