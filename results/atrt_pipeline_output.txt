@@ -5,7 +5,7 @@ ATRT Drug Repurposing Pipeline — save_results.py v3.0
   subgroup     : pan-ATRT
   location     : unknown_location
   generic_only : False
-  timestamp    : 2026-04-11 12:01:31
+  timestamp    : 2026-04-11 13:25:36
 =================================================================
 CMap: loaded ATRT scores from /Users/shruthisathya/bioforge_product/gbmresearch/data/cmap_query/atrt_cmap_scores.json
 ✅ CMap ATRT: 38971 pre-computed scores from /Users/shruthisathya/bioforge_product/gbmresearch/data/cmap_query/atrt_cmap_scores.json
@@ -37,37 +37,8 @@ Loading DepMap from CSV files...
 Tier 1 (OncotreeSubtype): 22 ATRT/rhabdoid lines
 Loading CRISPRGeneEffect.csv for 22 cell lines...
 Matched 15/22 ATRT cell lines in CRISPRGeneEffect.csv
+EZH2 median Chronos across all ATRT lines: -0.386
+EZH2 per-line Chronos:
+{'ACH-000160': -0.6611641111722297, 'ACH-001128': -0.5563735332384881, 'ACH-000597': -0.3692514233142367, 'ACH-000096': -0.111886211430702, 'ACH-001020': -0.2472138446390505, 'ACH-001031': -0.628775557144773, 'ACH-000533': -0.344377124147014, 'ACH-001099': -0.3255046436689716, 'ACH-001211': -0.293820904900833, 'ACH-000172': -0.72572288289936, 'ACH-000375': -0.4721524838715178, 'ACH-001289': -0.6769993885758183, 'ACH-000607': -0.2076992195497762, 'ACH-001028': -0.385879611162885, 'ACH-001532': -0.9208805540428728}
 ✅ DepMap loaded from CSV: 15 cell lines | 17787 genes from CSV (+ 0 from fallback) | 875 strongly essential
-   Lines: ['G-402', 'TTC-549', 'CHLA-266', 'BT-12', 'MON', 'TM-87', 'NCI-H2004 RT', 'KYM-1', 'G-401', 'TTC-709', 'COG-AR-359', 'CHLA-06-ATRT', 'KD', 'BT-16', 'JMU-RTK-2']
-✅ PPI scoring v6.0 (ATRT): 4387 candidates | distribution: {1.0: 107, 0.85: 173, 0.6: 67, 0.2: 4040}
-ATRT boosts applied: EZH2×11 | AURKA×25 | SMO×0
-BBBFilter: penalised 19 known GBM/CNS failures
-ATRT IC50 annotation: 6 verified | 2 no primary data | 4379 not in database | 0 discordances
-Toxicity — ALISERTIB + TAZEMETOSTAT + GIVINOSTAT: 40.0% (HIGH_RISK), mult=0.600 [conservative] / 0.760 [optimistic]
-CMap: loaded ATRT scores from /Users/shruthisathya/bioforge_product/gbmresearch/data/cmap_query/atrt_cmap_scores.json
-✅ CMap ATRT: 38971 pre-computed scores from /Users/shruthisathya/bioforge_product/gbmresearch/data/cmap_query/atrt_cmap_scores.json
-
-✅ Results saved to : results/atrt_pipeline_results.json
-✅ n_drugs_screened : 4387
-✅ CMap status      : live scores
-
-── SMARCB1 Statistics ───────────────────────────────────
-  SMARCB1 loss     : 49/49 samples
-  Statistical note : N/A — SMARCB1 biallelic loss is the defining event in ATRT (Hasselblatt 2011 PMID 20625942)
-
-── Top 8 Candidates ─────────────────────────────────────────
-  Drug                        Score  BBB          Generic   EZH2↑   AURKA↑  IC50 (µM)
-  alisertib                   1.000  HIGH               —       —      YES  0.098 (BT16)
-  tazemetostat                1.000  MODERATE           —     YES        —  0.88 (G401)
-  givinostat                  0.915  MODERATE    ✓ GENERIC       —        —  —
-  panobinostat                0.915  HIGH               —       —        —  0.0085 (BT16)
-  OTX015                      0.901  MODERATE           —       —        —  —
-  Birabresib                  0.901  MODERATE           —       —        —  0.31 (BT16)
-  AMG900                      0.900  UNKNOWN            —       —      YES  —
-  AT-9283                     0.900  UNKNOWN            —       —      YES  —
-
-  Total drugs screened: 4387
-  Depmap source: live CSV (DepMap 24Q4)
-  Tissue source: GSE70678 + GTEx (differential expression)
-
-Next step: python -m backend.pipeline.generate_figures
+   Lines: ['BT-12', 'MON', 'TTC-709', 'G-401', 'BT-16', 'CHLA-266', 'NCI-H2004 RT', 'KD', 'TTC-549', 'TM-87', 'G-402', 'COG-AR-359', 'KYM-1', 'CHLA-06-ATRT', 'JMU-RTK-2']

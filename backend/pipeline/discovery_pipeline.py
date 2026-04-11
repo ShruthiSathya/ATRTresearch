@@ -325,6 +325,13 @@ class ATRTGenomicValidator:
                 )
 
             result["total_samples"]      = len(atrt_cols)
+            total = len(atrt_cols)
+            result["subgroup_counts"] = {
+                "TYR": round(total * 0.36),
+                "SHH": round(total * 0.37),
+                "MYC": round(total * 0.27),
+            }
+            result["subgroup_note"] = "Estimated from Johann 2016 prevalence priors (no methylation data)"
             result["smarcb1_loss_count"] = len(atrt_cols)   # ~100% in cohort
             result["calling_method"]     = "gse70678_fallback"
 

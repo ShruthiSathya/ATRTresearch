@@ -368,6 +368,19 @@ class DepMapEssentiality:
             self.is_ready          = True
             self.using_fallback    = False
 
+            if "EZH2" in gene_scores:
+                logger.info("EZH2 median Chronos across all ATRT lines: %.3f", gene_scores["EZH2"])
+                # Find the raw EZH2 column name (handles "EZH2 (2146)" format)
+                ezh2_col = next(
+                    (c for c in relevant.columns if c.startswith("EZH2")), None
+                )
+                if ezh2_col:
+                    logger.info("EZH2 per-line Chronos:\n%s",
+                        relevant[ezh2_col].to_dict()
+                    )
+                else:
+                    logger.info("EZH2 column not found in relevant DataFrame")
+
             n_essential = sum(1 for v in gene_scores.values() if v <= -1.0)
 
             # Map model IDs back to display names

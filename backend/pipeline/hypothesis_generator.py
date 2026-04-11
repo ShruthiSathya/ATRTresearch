@@ -160,7 +160,15 @@ class HypothesisGenerator:
         p_value:           Optional[float] = None,
     ) -> List[Dict]:
 
-        sorted_candidates = sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)
+        sorted_candidates = sorted(
+            candidates,
+            key=lambda x: (
+                x.get("score", 0),
+                1 if x.get("ic50_validated") else 0,
+                1 if x.get("bbb_penetrance") == "HIGH" else 0.5 if x.get("bbb_penetrance") == "MODERATE" else 0,
+            ),
+            reverse=True,
+        )
         if len(sorted_candidates) < 3:
             return []
 

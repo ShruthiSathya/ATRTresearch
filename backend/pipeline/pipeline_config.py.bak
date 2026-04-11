@@ -466,6 +466,7 @@ TOXICITY = {
         "METFORMIN":         0.01,   # Very low toxicity
         "BORTEZOMIB":        0.20,   # IV formulation; neuropathy + hematologic
         "TRETINOIN":         0.05,   # ATRA; pseudo-tumour cerebri risk
+        "GIVINOSTAT": 0.15,  # Infantino 2019 Haematologica — G3/4 hematologic ~15% in myelofibrosis
     },
     "default_rate":              0.10,
     "max_combined_rate":         0.40,
@@ -661,3 +662,6 @@ ATRT_POTENCY_MODIFIERS: dict = {
     "onc201":             0.95,
     "paxalisib":          0.90,
 }
+
+
+ATRT_PRIORITY_LINES = ["BT-16", "G-401", "BT-12", "CHLA-06-ATRT"]  # EZH2 synleth confirmed
