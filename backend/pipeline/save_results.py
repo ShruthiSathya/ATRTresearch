@@ -7,8 +7,8 @@ Run:
   python -m backend.pipeline.save_results --disease atrt --top_n 20
 
 Outputs:
-  results/atrt_pipeline_results.json   ← main results
-  results/atrt_pipeline_output.txt     ← run log
+  results/atrt_pipeline_results.json
+  results/atrt_pipeline_output.txt
 """
 
 import asyncio
@@ -19,6 +19,7 @@ import math
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List, Optional
 
 try:
     from .pipeline_config import BBB as BBB_CONFIG, COMPOSITE_WEIGHTS
@@ -28,9 +29,9 @@ except ImportError:
 
 def setup_logging(log_path: Path) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    handlers = [
+    handlers: List[logging.Handler] = [
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(log_path, mode="w"),
+        logging.FileHandler(str(log_path), mode="w"),
     ]
     logging.basicConfig(
         level=logging.INFO, format="%(message)s", handlers=handlers
@@ -58,6 +59,10 @@ def _normalise_candidate(c: dict) -> dict:
         "bbb_penetrance":          c.get("bbb_penetrance", "UNKNOWN"),
         "bbb_score":               round(float(c.get("bbb_score", 0)), 4),
         "clinical_failure":        bool(c.get("clinical_failure", False)),
+        # Generic drug fields
+        "has_generic":             bool(c.get("has_generic", False)),
+        "generic_source":          c.get("generic_source", ""),
+        "cost_category":           c.get("cost_category", ""),
         # ATRT-specific fields
         "ezh2_boosted":            bool(c.get("ezh2_boosted", False)),
         "aurka_boosted":           bool(c.get("aurka_boosted", False)),
@@ -71,7 +76,7 @@ def _normalise_candidate(c: dict) -> dict:
         # CMap
         "cmap_score":              c.get("cmap_score"),
         "is_reverser":             c.get("is_reverser"),
-        # Scoring notes
+        # Notes
         "depmap_note":             c.get("depmap_note", ""),
         "sc_context":              c.get("sc_context", ""),
         "escape_note":             c.get("escape_note", ""),
@@ -79,7 +84,7 @@ def _normalise_candidate(c: dict) -> dict:
     }
 
 
-def _extract_confidence_breakdown(hypotheses: list) -> dict | None:
+def _extract_confidence_breakdown(hypotheses: list) -> Optional[Dict]:
     if not hypotheses:
         return None
     h  = hypotheses[0]
@@ -104,14 +109,14 @@ async def main(
     disease: str,
     top_n: int,
     output_path: Path,
-    subgroup: str | None = None,
+    subgroup: Optional[str] = None,
     location: str = "unknown_location",
 ) -> None:
     setup_logging(output_path.parent / "atrt_pipeline_output.txt")
     logger = logging.getLogger(__name__)
 
     logger.info("=" * 65)
-    logger.info("ATRT Drug Repurposing Pipeline — save_results.py")
+    logger.info("ATRT Drug Repurposing Pipeline — save_results.py v2.1")
     logger.info(f"  disease   : {disease}")
     logger.info(f"  top_n     : {top_n}")
     logger.info(f"  subgroup  : {subgroup or 'pan-ATRT'}")
@@ -119,7 +124,13 @@ async def main(
     logger.info(f"  timestamp : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 65)
 
-    from backend.pipeline.discovery_pipeline import ProductionPipeline
+    # Dynamic import to handle both package and direct run
+    try:
+        from backend.pipeline.discovery_pipeline import ProductionPipeline
+        from backend.pipeline.cmap_query import CMAPQuery
+    except ImportError:
+        from pipeline.discovery_pipeline import ProductionPipeline
+        from pipeline.cmap_query import CMAPQuery
 
     pipeline = ProductionPipeline()
     await pipeline.initialize(disease=disease)
@@ -140,12 +151,16 @@ async def main(
         or len(candidates)
     )
 
+    # Check CMap status
+    cmap = CMAPQuery()
+    cmap_loaded = cmap.has_precomputed_scores()
+
     results = {
-        "run_timestamp":  datetime.now().isoformat(),
-        "disease":        disease,
-        "subgroup":       subgroup or "pan-ATRT",
-        "location":       location,
-        "pipeline_version": "ATRT v1.0",
+        "run_timestamp":    datetime.now().isoformat(),
+        "disease":          disease,
+        "subgroup":         subgroup or "pan-ATRT",
+        "location":         location,
+        "pipeline_version": "ATRT v2.1",
 
         "stats": {
             "smarcb1_loss_count":       stats.get("smarcb1_loss_count", 0),
@@ -160,75 +175,81 @@ async def main(
             "escape_bypass_mode":       stats.get("escape_bypass_mode", "curated fallback"),
             "composite_weights":        COMPOSITE_WEIGHTS,
             "calling_method":           stats.get("calling_method", "none"),
+            "cmap_loaded":              cmap_loaded,
+            "cmap_note": (
+                "Live CMap scores loaded" if cmap_loaded
+                else "Neutral prior (0.50) — run 01_prepare_cmap.py to generate real scores"
+            ),
             "data_streams_active": [
                 "DepMap CRISPR (Broad Institute — ATRT/rhabdoid lines: BT16, BT37, G401, A204)",
                 "GSE70678 bulk RNA-seq (Torchia 2015 — 49 ATRT tumours)",
-                "OpenTargets API (CNS/Oncology drugs)",
-                "STRING-DB PPI network",
+                "GTEx v8 normal brain reference",
+                "OpenTargets API (CNS/Oncology drugs — live)",
+                "FDA/RxNorm generic drug annotation (live)",
+                "STRING-DB PPI network (live + curated)",
                 "ATRT published IC50 validation (BT16/BT37/G401/A204)",
+                f"CMap L1000 transcriptomic reversal: {'live scores' if cmap_loaded else 'neutral prior'}",
             ],
         },
 
         "top_candidates": [_normalise_candidate(c) for c in candidates[:top_n]],
-
-        "top_combinations": [],   # populated if synergy predictor runs
-
         "confidence_breakdown": _extract_confidence_breakdown(hypotheses),
         "hypotheses":           hypotheses,
-
-        "reports": {
-            "novelty":          raw.get("novelty_report", ""),
-            "polypharmacology": raw.get("poly_report", ""),
-        },
-
-        # ATRT-specific summary table (mirrors README format)
-        "atrt_summary": _build_summary_table(candidates[:8]),
+        "atrt_summary":         _build_summary_table(candidates[:8]),
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
+    with open(str(output_path), "w") as f:
         json.dump(results, f, indent=2, default=_safe)
 
     logger.info(f"\n✅ Results saved to : {output_path}")
     logger.info(f"✅ n_drugs_screened : {n_screened}")
-    logger.info(f"\nNext step: python -m backend.pipeline.generate_figures")
+    logger.info(f"✅ CMap status      : {'live scores' if cmap_loaded else 'neutral prior'}")
+    logger.info("\nNext step: python -m backend.pipeline.generate_figures")
 
-    # Summary table
-    logger.info(f"\n── SMARCB1 Statistics ──────────────────────────────")
+    logger.info(f"\n── SMARCB1 Statistics ────────────────────────────────")
     logger.info(f"  SMARCB1 loss     : {stats.get('smarcb1_loss_count', 0)}/{stats.get('total_samples', 0)} samples")
     logger.info(f"  SMARCA4 loss     : {stats.get('smarca4_loss_count', 0)} samples")
     logger.info(f"  Statistical note : {stats.get('p_value_label', 'N/A')}")
 
-    logger.info(f"\n── Top 8 Candidates ──────────────────────────────────")
-    logger.info(f"  {'Drug':<26} {'Score':>6}  {'BBB':<10}  {'EZH2↑':>6}  {'AURKA↑':>7}  IC50 (µM)")
+    logger.info(f"\n── Top 8 Candidates ──────────────────────────────────────")
+    logger.info(
+        f"  {'Drug':<26} {'Score':>6}  {'BBB':<10}  "
+        f"{'Generic':>8}  {'EZH2↑':>6}  {'AURKA↑':>7}  IC50 (µM)"
+    )
     for c in candidates[:8]:
-        ic50_str = f"{c.get('ic50_um', 'N/A')} ({c.get('ic50_cell_line', '')})" if c.get("ic50_validated") else "—"
+        ic50_str = (
+            f"{c.get('ic50_um', 'N/A')} ({c.get('ic50_cell_line', '')})"
+            if c.get("ic50_validated") else "—"
+        )
+        gen_str = "✓ GENERIC" if c.get("has_generic") else "—"
         logger.info(
             f"  {c.get('name',''):<26} {c.get('score',0):>6.3f}  "
             f"{c.get('bbb_penetrance','?'):<10}  "
+            f"{gen_str:>8}  "
             f"{'YES' if c.get('ezh2_boosted') else '—':>6}  "
             f"{'YES' if c.get('aurka_boosted') else '—':>7}  "
             f"{ic50_str}"
         )
-    logger.info(f"\n  Total drugs screened (OpenTargets): {n_screened}")
+    logger.info(f"\n  Total drugs screened: {n_screened}")
 
 
 def _build_summary_table(candidates: list) -> list:
-    """Build summary table for README/report output."""
     rows = []
     for i, c in enumerate(candidates, 1):
         rows.append({
-            "rank":       i,
-            "drug":       c.get("name", "?"),
-            "score":      round(float(c.get("score", 0)), 3),
-            "bbb":        c.get("bbb_penetrance", "?"),
-            "depmap":     round(float(c.get("depmap_score", 0)), 3),
-            "tissue":     round(float(c.get("tissue_expression_score", 0)), 3),
-            "cmap_norm_cs": c.get("cmap_score"),
-            "ic50_um":    c.get("ic50_um"),
+            "rank":           i,
+            "drug":           c.get("name", "?"),
+            "score":          round(float(c.get("score", 0)), 3),
+            "bbb":            c.get("bbb_penetrance", "?"),
+            "depmap":         round(float(c.get("depmap_score", 0)), 3),
+            "tissue":         round(float(c.get("tissue_expression_score", 0)), 3),
+            "cmap_score":     c.get("cmap_score"),
+            "ic50_um":        c.get("ic50_um"),
             "ic50_cell_line": c.get("ic50_cell_line"),
-            "ezh2_boosted":  c.get("ezh2_boosted", False),
-            "aurka_boosted": c.get("aurka_boosted", False),
+            "ezh2_boosted":   c.get("ezh2_boosted", False),
+            "aurka_boosted":  c.get("aurka_boosted", False),
+            "has_generic":    c.get("has_generic", False),
         })
     return rows
 

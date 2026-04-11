@@ -2,29 +2,15 @@
 """
 run_pipeline.py
 ===============
-ATRT Drug Repurposing Pipeline — Standalone Runner v2.0
+ATRT Drug Repurposing Pipeline — Standalone Runner v2.1
 
 USAGE
 -----
-# Full pan-ATRT run (all drugs)
-python run_pipeline.py
-
-# Generic drugs only (FDA-approved generics — more accessible)
-python run_pipeline.py --generic-only
-
-# Subgroup-specific
-python run_pipeline.py --subgroup MYC
-python run_pipeline.py --subgroup TYR
-python run_pipeline.py --subgroup SHH
-
-# With location (affects BBB penalty)
-python run_pipeline.py --location infratentorial
-
-# Combined
-python run_pipeline.py --subgroup MYC --location supratentorial --generic-only
-
-# Check data files only
-python run_pipeline.py --check-data
+python run_pipeline.py                                  # Full pan-ATRT
+python run_pipeline.py --generic-only                   # Generic drugs only
+python run_pipeline.py --subgroup MYC                   # MYC subgroup
+python run_pipeline.py --subgroup SHH --location infratentorial
+python run_pipeline.py --check-data                     # Verify data files
 
 WHAT THIS NEEDS
 ---------------
@@ -32,21 +18,11 @@ Required (for live DepMap scoring):
   data/depmap/CRISPRGeneEffect.csv
   data/depmap/Model.csv
 
-Optional (auto-detected, significantly improves tissue scoring):
-  data/raw_omics/GSE70678_gene_expression.tsv  ← YOUR FILE
-  data/raw_omics/GTEx_brain_normal_reference.tsv ← YOUR FILE
-  data/raw_omics/GPL570_probe_map.tsv           ← YOUR FILE
-  data/raw_omics/GPL570.annot.gz
-  data/raw_omics/GSE70678_series_matrix.txt.gz ← YOUR FILE
-
-If any optional file is missing, the pipeline uses curated literature-based
-scores and clearly logs which data source is active.
-
-OUTPUT
-------
-  results/atrt_pipeline_results.json
-  results/atrt_pipeline_output.txt (log)
-  Printed ranked table to stdout
+Optional (auto-detected):
+  data/raw_omics/GSE70678_gene_expression.tsv
+  data/raw_omics/GTEx_brain_normal_reference.tsv
+  data/raw_omics/GPL570_probe_map.tsv
+  data/cmap_query/atrt_cmap_scores.json  ← run scripts/01_prepare_cmap.py first
 """
 
 import argparse
@@ -57,16 +33,16 @@ import math
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List, Optional  # ← must be at top
 
-# ─── Path setup: add backend/ to sys.path so imports work ────────────────────
+# ── Path setup ────────────────────────────────────────────────────────────────
 _THIS_DIR = Path(__file__).resolve().parent
 _BACKEND  = _THIS_DIR / "backend"
-if str(_BACKEND) not in sys.path:
-    sys.path.insert(0, str(_BACKEND))
-if str(_THIS_DIR) not in sys.path:
-    sys.path.insert(0, str(_THIS_DIR))
+for _p in [str(_BACKEND), str(_THIS_DIR)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-# ─── Logging ─────────────────────────────────────────────────────────────────
+# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
@@ -83,9 +59,7 @@ def _safe(obj):
     raise TypeError(f"Not serialisable: {type(obj)}")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Data file check
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Data file check ───────────────────────────────────────────────────────────
 
 def check_data_files(repo_root: Path) -> bool:
     required = {
@@ -95,17 +69,20 @@ def check_data_files(repo_root: Path) -> bool:
         "data/depmap/Model.csv": "Same download as CRISPRGeneEffect.csv",
     }
     optional = {
-        "data/raw_omics/GSE70678_gene_expression.tsv":  "GEO GSE70678 processed matrix",
-        "data/raw_omics/GTEx_brain_normal_reference.tsv":"GTEx v8 brain tissues",
-        "data/raw_omics/GPL570_probe_map.tsv":           "GPL570 Affymetrix probe map",
-        "data/raw_omics/GPL570.annot.gz":                "GPL570 annotation (raw)",
-        "data/raw_omics/GSE70678_series_matrix.txt.gz":  "GEO GSE70678 series matrix",
-        "data/cmap_query/atrt_cmap_scores.json":          "clue.io CMap scores (optional)",
+        "data/raw_omics/GSE70678_gene_expression.tsv":   "GEO GSE70678 processed (already present ✅)",
+        "data/raw_omics/GTEx_brain_normal_reference.tsv": "GTEx v8 brain tissues (already present ✅)",
+        "data/raw_omics/GPL570_probe_map.tsv":            "GPL570 probe map (already present ✅)",
+        "data/raw_omics/GPL570.annot.gz":                 "GPL570 annotation (already present ✅)",
+        "data/raw_omics/GSE70678_series_matrix.txt.gz":   "GEO GSE70678 series matrix (already present ✅)",
+        "data/cmap_query/atrt_cmap_scores.json": (
+            "Run: python scripts/01_prepare_cmap.py → submit to clue.io → "
+            "python -m backend.pipeline.integrate_cmap_results"
+        ),
     }
 
-    print("\n" + "=" * 65)
+    print("\n" + "=" * 70)
     print("DATA FILE STATUS")
-    print("=" * 65)
+    print("=" * 70)
 
     all_required_ok = True
     for rel, instructions in required.items():
@@ -126,44 +103,54 @@ def check_data_files(repo_root: Path) -> bool:
         if not ok:
             print(f"              → {desc}")
 
-    print("=" * 65)
+    print("=" * 70)
     if not all_required_ok:
         print(
             "\n⚠️  Required DepMap files missing.\n"
-            "   Pipeline will run using VERIFIED FALLBACK Chronos values\n"
-            "   (sourced from Knutson 2013, Geoerger 2017, Sredni 2017, Lin 2019).\n"
-            "   Download DepMap CSV files to get live cell-line-specific scores.\n"
+            "   Pipeline will run using VERIFIED FALLBACK Chronos values.\n"
+            "   Download DepMap CSV files for live cell-line-specific scores.\n"
         )
     else:
         print("\n✅ Required files present — live DepMap scoring enabled.\n")
+
+    # CMap status
+    cmap_path = repo_root / "data/cmap_query/atrt_cmap_scores.json"
+    if cmap_path.exists():
+        print("✅ CMap scores present — transcriptomic reversal scoring enabled.\n")
+    else:
+        print(
+            "⚪ CMap scores not yet generated.\n"
+            "   All drugs will receive neutral CMap prior (0.50).\n"
+            "   To generate: python scripts/01_prepare_cmap.py\n"
+            "   Then submit gene lists to clue.io and run integrate_cmap_results.py\n"
+        )
     return all_required_ok
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Main run
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Main run ──────────────────────────────────────────────────────────────────
 
 async def run_pipeline(
     subgroup:     Optional[str] = None,
     location:     str  = "unknown_location",
     top_n:        int  = 20,
     generic_only: bool = False,
-    output_path:  Path = None,
-    repo_root:    Path = None,
+    output_path:  Optional[Path] = None,
+    repo_root:    Optional[Path] = None,
 ) -> Dict:
     from pipeline.discovery_pipeline import ProductionPipeline
 
+    repo_root   = repo_root or _THIS_DIR
     output_path = output_path or (repo_root / "results/atrt_pipeline_results.json")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print("\n" + "=" * 65)
-    print("ATRT Drug Repurposing Pipeline v2.0")
+    print("\n" + "=" * 70)
+    print("ATRT Drug Repurposing Pipeline v2.1")
     print(f"  Subgroup     : {subgroup or 'pan-ATRT'}")
     print(f"  Location     : {location}")
     print(f"  Generic only : {generic_only}")
     print(f"  Top N        : {top_n}")
     print(f"  Timestamp    : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 65)
+    print("=" * 70)
 
     pipeline = ProductionPipeline(generic_only=generic_only)
     await pipeline.initialize()
@@ -181,18 +168,15 @@ async def run_pipeline(
     hyps       = result.get("hypotheses", [])
 
     # ── Print ranked table ───────────────────────────────────────────────────
-    print(f"\n{'='*80}")
-    if generic_only:
-        print("TOP GENERIC DRUG CANDIDATES FOR ATRT")
-        print("(Restricted to FDA-approved generic formulations)")
-    else:
-        print(f"TOP {min(len(candidates), top_n)} DRUG CANDIDATES FOR ATRT")
-    print(f"{'='*80}")
+    print(f"\n{'='*85}")
+    header = "TOP GENERIC DRUG CANDIDATES FOR ATRT" if generic_only else f"TOP {min(len(candidates), top_n)} DRUG CANDIDATES FOR ATRT"
+    print(header)
+    print(f"{'='*85}")
     print(
         f"  {'Rk':<3}  {'Drug':<24}  {'Score':>6}  {'BBB':<10}  "
         f"{'Generic':>8}  {'EZH2↑':>5}  {'AURKA↑':>6}  IC50 (µM)"
     )
-    print("-" * 80)
+    print("-" * 85)
 
     for i, c in enumerate(candidates[:top_n], 1):
         ic50_str = (
@@ -209,61 +193,66 @@ async def run_pipeline(
         )
 
     # ── Score breakdown ──────────────────────────────────────────────────────
-    print(f"\n{'='*65}")
+    print(f"\n{'='*70}")
     print("SCORE COMPONENT BREAKDOWN (top 8)")
-    print(f"{'='*65}")
-    print(f"  {'Drug':<24}  {'Total':>6}  {'Tissue':>6}  {'DepMap':>6}  {'Escape':>6}  {'PPI':>4}")
-    print("-" * 65)
+    print(f"{'='*70}")
+    print(f"  {'Drug':<24}  {'Total':>6}  {'Tissue':>6}  {'DepMap':>6}  {'Escape':>6}  {'PPI':>4}  {'CMap':>5}")
+    print("-" * 70)
     for c in candidates[:8]:
+        cmap_str = f"{c.get('cmap_score', 0):.2f}" if c.get("cmap_score") is not None else "N/A"
         print(
             f"  {c.get('name','?'):<24}  {c.get('score',0):>6.3f}  "
             f"{c.get('tissue_expression_score',0):>6.3f}  "
             f"{c.get('depmap_score',0):>6.3f}  "
             f"{c.get('escape_bypass_score',0):>6.3f}  "
-            f"{c.get('ppi_score',0):>4.2f}"
+            f"{c.get('ppi_score',0):>4.2f}  "
+            f"{cmap_str:>5}"
         )
 
     # ── Top hypothesis ───────────────────────────────────────────────────────
     if hyps:
         h  = hyps[0]
         bd = h.get("confidence_breakdown", {})
-        print(f"\n{'='*65}")
+        print(f"\n{'='*70}")
         print("TOP COMBINATION HYPOTHESIS")
-        print(f"{'='*65}")
+        print(f"{'='*70}")
         print(f"  Combo          : {h.get('drug_or_combo', '?')}")
         print(f"  Confidence     : {bd.get('confidence_range', h.get('confidence', '?'))}")
         print(f"  Priority       : {h.get('priority', '?')}")
-        print(f"  SMARCB1 note   : {h.get('statistical_note', 'N/A')[:60]}")
+        smarcb1_note = h.get('statistical_note', 'N/A')
+        print(f"  SMARCB1 note   : {smarcb1_note[:70]}")
         if bd.get("ezh2_inhibitors_in_combo"):
-            print(f"  EZH2 in combo  : {bd['ezh2_inhibitors_in_combo']} ← POSITIVE in ATRT")
+            print(f"  EZH2 in combo  : {bd['ezh2_inhibitors_in_combo']} ← POSITIVE in ATRT (synthetic lethality)")
         if bd.get("toxicity_flag"):
-            print(f"  Toxicity       : {bd.get('toxicity_flag')} — {bd.get('toxicity_note','')[:50]}")
+            tox_note = bd.get('toxicity_note', '')[:55]
+            print(f"  Toxicity       : {bd.get('toxicity_flag')} — {tox_note}")
 
     # ── Pipeline statistics ───────────────────────────────────────────────────
-    print(f"\n{'='*65}")
+    print(f"\n{'='*70}")
     print("PIPELINE STATISTICS")
-    print(f"{'='*65}")
-    print(f"  Drugs screened       : {stats.get('n_screened', '?')}")
-    print(f"  SMARCB1 loss         : {stats.get('smarcb1_loss_count',0)}/{stats.get('total_samples',0)}")
-    print(f"  RNA upregulated genes: {stats.get('rna_upregulated_genes',0)}")
-    print(f"  EZH2 inhibitors boost: {stats.get('n_ezh2_boosted',0)}")
-    print(f"  Generic in top-{top_n}    : {stats.get('n_generic_in_top_k',0)}")
-    print(f"  DepMap source        : {stats.get('depmap_source','?')}")
-    print(f"  Tissue source        : {stats.get('tissue_source','?')}")
-    print(f"  Escape bypass mode   : {stats.get('escape_bypass_mode','?')}")
-    print(f"  Genomics method      : {stats.get('calling_method','?')}")
+    print(f"{'='*70}")
+    print(f"  Drugs screened         : {stats.get('n_screened', '?')}")
+    print(f"  SMARCB1 loss           : {stats.get('smarcb1_loss_count',0)}/{stats.get('total_samples',0)}")
+    print(f"  RNA upregulated genes  : {stats.get('rna_upregulated_genes',0)}")
+    print(f"  EZH2 inhibitors boosted: {stats.get('n_ezh2_boosted',0)}")
+    print(f"  Generic in top-{top_n:<2}       : {stats.get('n_generic_in_top_k',0)}")
+    print(f"  DepMap source          : {stats.get('depmap_source','?')}")
+    print(f"  Tissue source          : {stats.get('tissue_source','?')}")
+    print(f"  Escape bypass mode     : {stats.get('escape_bypass_mode','?')}")
+    print(f"  Genomics calling method: {stats.get('calling_method','?')}")
+    print(f"  CMap data              : {'live scores' if stats.get('cmap_loaded') else 'neutral prior (0.50) — run 01_prepare_cmap.py'}")
 
     # ── Generic drug summary ─────────────────────────────────────────────────
     generic_top = [c for c in candidates[:top_n] if c.get("has_generic")]
     if generic_top:
-        print(f"\n{'='*65}")
-        print(f"GENERIC DRUGS IN TOP {top_n} (n={len(generic_top)})")
-        print(f"{'='*65}")
+        print(f"\n{'='*70}")
+        print(f"GENERIC DRUGS IN TOP {top_n} (n={len(generic_top)}) — More accessible for pediatric patients")
+        print(f"{'='*70}")
         for c in generic_top:
+            mech = (c.get('mechanism', '')[:45] or '—')
             print(
-                f"  {c.get('name','?'):<24}  score={c.get('score',0):.3f}  "
-                f"BBB={c.get('bbb_penetrance','?')}  "
-                f"mechanism: {(c.get('mechanism','')[:40])}"
+                f"  {c.get('name','?'):<26}  score={c.get('score',0):.3f}  "
+                f"BBB={c.get('bbb_penetrance','?')}  {mech}"
             )
 
     # ── Save JSON ────────────────────────────────────────────────────────────
@@ -273,7 +262,7 @@ async def run_pipeline(
         "subgroup":         subgroup or "pan-ATRT",
         "location":         location,
         "generic_only":     generic_only,
-        "pipeline_version": "v2.0",
+        "pipeline_version": "v2.1",
         "stats":            stats,
         "top_candidates":   candidates,
         "hypotheses":       hyps,
@@ -299,20 +288,16 @@ async def run_pipeline(
 
     logger.info("✅ Results saved → %s", output_path)
     print(f"\n✅ Results saved to: {output_path}")
+    print("   Next step: python -m backend.pipeline.generate_figures\n")
 
     return result
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI
-# ─────────────────────────────────────────────────────────────────────────────
-
-from typing import Optional, Dict  # noqa: E402
-
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ATRT Drug Repurposing Pipeline v2.0",
+        description="ATRT Drug Repurposing Pipeline v2.1",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
