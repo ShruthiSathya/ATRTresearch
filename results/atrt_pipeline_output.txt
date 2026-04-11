@@ -1,0 +1,41 @@
+=================================================================
+ATRT Drug Repurposing Pipeline — save_results.py v3.0
+  disease      : atrt
+  top_n        : 20
+  subgroup     : pan-ATRT
+  location     : unknown_location
+  generic_only : True
+  timestamp    : 2026-04-11 02:44:17
+=================================================================
+CMap: loaded ATRT scores from /Users/shruthisathya/bioforge_product/gbmresearch/data/cmap_query/atrt_cmap_scores.json
+✅ CMap ATRT: 38971 pre-computed scores from /Users/shruthisathya/bioforge_product/gbmresearch/data/cmap_query/atrt_cmap_scores.json
+✅ PPI Network Module v5.5 (Extended proteasome neighbors + Marizomib fix)
+DepMapEssentiality v4.0 — effect: CRISPRGeneEffect.csv (exists=True), model: Model.csv (exists=True)
+SynergyPredictor v2.0 (ATRT): 5 published CI entries, 11 target-pair synergy rules
+HypothesisGenerator v1.0 (ATRT — SMARCB1 synthetic lethality logic)
+BBBFilter v3.0 (MW limit=800.0 Da | tazemetostat=MODERATE | no duplicates)
+ProductionPipeline v3.0 (generic_only=True)
+Pipeline run: disease=atrt subgroup=pan-ATRT location=unknown_location generic_only=True top_k=20
+Initializing Unbiased Repurposing Screen Mode...
+✅ Loaded 4382 total drugs with known targets for unbiased screening.
+Screening Annotated: 1545/4382 candidates have generic formulations available.
+Generic filter: 4389 → 1549 candidates
+Scoring 1549 candidates...
+Loading GSE70678 gene expression: /Users/shruthisathya/bioforge_product/gbmresearch/data/raw_omics/GSE70678_gene_expression.tsv
+Loaded 21752 genes × 49 samples
+GSE70678 fallback: no ATRT-labelled columns found — treating all 49 samples as ATRT
+GSE70678 fallback: 49 ATRT samples, 5438 upregulated genes
+Genomics: method=gse70678_fallback | SMARCB1_loss=49/49 | upregulated_genes=5438
+Loading GSE70678 gene expression: /Users/shruthisathya/bioforge_product/gbmresearch/data/raw_omics/GSE70678_gene_expression.tsv
+Loaded 21752 genes × 49 samples
+GTEx reference loaded: 73321 genes, 14 brain tissue columns
+GSE70678 differential: 18161 genes in common with GTEx (49 ATRT samples vs 73321 reference tissues)
+✅ GSE70678 loaded: 18161 genes | 18093 up, 68 down vs normal brain
+   Percentiles: p25=12.58 p50=41.76 p75=141.11 p90=364.96
+Tissue scoring: 1549 candidates | range=[0.31, 0.92]
+Loading DepMap from CSV files...
+Tier 1 (OncotreeSubtype): 22 ATRT/rhabdoid lines
+Loading CRISPRGeneEffect.csv for 22 cell lines...
+Matched 15/22 ATRT cell lines in CRISPRGeneEffect.csv
+✅ DepMap loaded from CSV: 15 cell lines | 17787 genes from CSV (+ 0 from fallback) | 875 strongly essential
+   Lines: ['TM-87', 'KYM-1', 'G-401', 'CHLA-266', 'MON', 'BT-16', 'BT-12', 'G-402', 'TTC-549', 'KD', 'TTC-709', 'COG-AR-359', 'JMU-RTK-2', 'NCI-H2004 RT', 'CHLA-06-ATRT']
