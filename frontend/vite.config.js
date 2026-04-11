@@ -9,7 +9,8 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
-        // ADD THIS LINE:
+        // Strip the /api prefix before forwarding to FastAPI
+        // FastAPI routes are /analyze, /generate_ai_analysis, etc. (no /api prefix)
         rewrite: (path) => path.replace(/^\/api/, '')
       }
     }
