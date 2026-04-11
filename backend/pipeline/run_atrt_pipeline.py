@@ -1,474 +1,379 @@
+#!/usr/bin/env python3
 """
-run_atrt_pipeline.py
-====================
-Full ATRT pipeline orchestrator. Analogous to run_dipg_pipeline.py.
+scripts/run_pipeline.py
+=======================
+Complete ATRT Drug Repurposing Pipeline runner.
 
-SETUP CHECKLIST (run before first execution)
----------------------------------------------
-1. Download GSE70678 expression matrix to data/raw_omics/GSE70678_ATRT_expression.txt
-   GEO: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE70678
+USAGE
+-----
+# Full pipeline (all drugs)
+python scripts/run_pipeline.py
 
-2. Download GSE106982 to data/raw_omics/GSE106982_ATRT_methylation.txt (optional)
-   GEO: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE106982
+# Generic drugs only (FDA-approved generics — cheaper, more accessible)
+python scripts/run_pipeline.py --generic-only
 
-3. DepMap: already downloaded. No new files needed.
-   Update depmap_essentiality.py to include ATRT_SUBTYPE_TERMS (see atrt_pipeline_config.py).
+# Specific subgroup
+python scripts/run_pipeline.py --subgroup MYC
+python scripts/run_pipeline.py --subgroup TYR
+python scripts/run_pipeline.py --subgroup SHH
 
-4. (Optional) CBTN ATRT genomics from Cavatica → data/validation/cbtn_genomics/atrt/
+# With location (affects BBB penalty)
+python scripts/run_pipeline.py --location infratentorial
 
-5. Run CMap query with ATRT signature:
-   python -m backend.pipeline.prepare_cmap_query --disease atrt --output data/cmap_query/
-   Then submit to clue.io and run integrate_cmap_results.py with --output atrt_cmap_scores.json
+# Combined
+python scripts/run_pipeline.py --subgroup MYC --location supratentorial --generic-only
 
-Run:
-   python -m backend.pipeline.run_atrt_pipeline --disease atrt --top_n 20
+WHAT THIS RUNS
+--------------
+1. Data check  — verifies required files exist
+2. OpenTargets — fetches CNS/oncology drug candidates (~500+ drugs)
+3. DepMap      — CRISPR essentiality scores (ATRT/rhabdoid lines)
+4. GSE70678    — tissue expression scores vs GTEx normal brain
+5. Escape bypass — SMARCB1-loss resistance map
+6. PPI network — STRING-DB proximity
+7. Composite score — weighted combination
+8. ATRT boosts — EZH2 ×1.40, AURKA ×1.15–1.30, SMO ×1.25 (SHH)
+9. BBB filter  — location-aware penalty
+10. Generic filter — (if --generic-only)
+11. IC50 annotation — published ATRT cell-line data
+12. Hypothesis — top triple combination
+13. Figures    — 4 publication figures
+14. Save results → results/atrt_pipeline_results.json
+
+PREREQUISITES
+-------------
+pip install pandas numpy scipy matplotlib requests aiohttp fastapi uvicorn h5py
+
+Data files (must exist before running):
+  data/depmap/CRISPRGeneEffect.csv   ← download from depmap.org/portal
+  data/depmap/Model.csv              ← same download
+
+Optional (improves scoring — auto-downloaded if missing):
+  data/raw_omics/GSE70678_series_matrix.txt.gz  ← or use pre-processed TSV
+  data/raw_omics/GSE70678_gene_expression.tsv   ← (produced by --process gse70678)
+  data/raw_omics/GTEx_brain_normal_reference.tsv ← (produced by --process gtex)
+  data/cmap_query/atrt_cmap_scores.json         ← from clue.io query
+
+HOW TO GET CMAP SCORES (optional but improves ranking)
+------------------------------------------------------
+1. Run: python scripts/01_prepare_cmap.py
+        → creates data/cmap_query/atrt_up_genes.txt
+                    data/cmap_query/atrt_down_genes.txt
+2. Go to: https://clue.io → Tools → L1000 Query
+3. Paste gene lists → Submit → wait ~10 min → Download query_result.gct
+4. Run: python -m backend.pipeline.integrate_cmap_results
+        → creates data/cmap_query/cmap_scores_pipeline.json
+        (rename to atrt_cmap_scores.json for ATRT-specific results)
 """
 
+import argparse
 import asyncio
 import json
 import logging
-import argparse
+import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger(__name__)
 
-
-def _is_atrt(disease_name: str) -> bool:
-    keywords = (
-        "atrt", "atypical teratoid", "rhabdoid tumor", "rhabdoid tumour",
-        "smarcb1", "smarcb1-deficient",
-    )
-    return any(k in disease_name.lower() for k in keywords)
+REPO_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "backend"))
+sys.path.insert(0, str(REPO_ROOT / "backend" / "pipeline"))
 
 
-class ATRTPipelineValidator:
-    """
-    Validates ATRT-specific genomic data from CBTN or GSE70678.
-    Analogous to PedcBioPortalValidator in discovery_pipeline.py.
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 0 — Data check
+# ─────────────────────────────────────────────────────────────────────────────
 
-    Outputs:
-    - smarcb1_loss_count: samples with SMARCB1 homozygous deletion or mutation
-    - subgroup_counts: {TYR: n, SHH: n, MYC: n}
-    - upregulated_genes: set of RNA-upregulated genes vs normal
-    """
-
-    def __init__(self, data_dir: str = "data/validation/cbtn_genomics/atrt/"):
-        self.data_dir = Path(data_dir)
-        # Lazy import to avoid circular dependency
-        from .atrt_pipeline_config import ATRT_GENOMICS
-        from .pipeline_config import GENOMICS as ATRT_GENOMICS
-        self.config = ATRT_GENOMICS
-
-    def validate_atrt_cohort(self) -> Dict:
-        """
-        Load ATRT genomic data and compute co-occurrence / subgroup statistics.
-        Falls back gracefully if files not found.
-        """
-        import pandas as pd
-
-        result = {
-            "smarcb1_loss_count": 0,
-            "smarca4_loss_count": 0,
-            "subgroup_counts":    {"TYR": 0, "SHH": 0, "MYC": 0},
-            "upregulated_genes":  set(),
-            "total_samples":      0,
-            "has_rna_data":       False,
-        }
-
-        # Try CBTN ATRT genomics
-        cna_path = self.data_dir / "cna.txt"
-        rna_path = self.data_dir / "rna_zscores.txt"
-        mut_path = self.data_dir / "mutations.txt"
-
-        if not cna_path.exists() and not rna_path.exists():
-            logger.info(
-                "ATRT genomic files not found at %s. "
-                "Falling back to GSE70678 if available. "
-                "This is non-fatal — pipeline will use prevalence priors.",
-                self.data_dir,
-            )
-            return self._load_gse70678_fallback(result)
-
-        # Load CNA for SMARCB1 deletion
-        if cna_path.exists():
-            try:
-                cna = pd.read_csv(cna_path, sep="\t", index_col=0)
-                cna.index = cna.index.astype(str).str.upper().str.strip()
-                result["total_samples"] = len(cna.columns)
-
-                for alias in self.config["smarcb1_aliases"]:
-                    if alias in cna.index:
-                        row = pd.to_numeric(cna.loc[alias], errors="coerce")
-                        result["smarcb1_loss_count"] = int(
-                            (row <= self.config["smarcb1_del_threshold"]).sum()
-                        )
-                        logger.info(
-                            "SMARCB1 loss: %d/%d samples (CNA ≤ %d)",
-                            result["smarcb1_loss_count"],
-                            result["total_samples"],
-                            self.config["smarcb1_del_threshold"],
-                        )
-                        break
-
-                for alias in self.config["smarca4_aliases"]:
-                    if alias in cna.index:
-                        row = pd.to_numeric(cna.loc[alias], errors="coerce")
-                        result["smarca4_loss_count"] = int(
-                            (row <= self.config["smarcb1_del_threshold"]).sum()
-                        )
-                        break
-
-            except Exception as e:
-                logger.warning("CNA loading failed: %s", e)
-
-        # Load RNA for upregulated genes
-        if rna_path.exists():
-            try:
-                rna = pd.read_csv(rna_path, sep="\t", index_col=0)
-                threshold = self.config["rna_upregulation_zscore"]
-                atrt_indicators = self.config["rna_atrt_col_indicators"]
-                normal_indicators = self.config["rna_normal_col_indicators"]
-                metadata_rows = self.config["rna_metadata_rows"]
-
-                gene_rows = [r for r in rna.index
-                             if str(r).upper().strip() not in metadata_rows]
-
-                if len(gene_rows) >= self.config["rna_min_genes_required"]:
-                    rna_expr = rna.loc[gene_rows]
-                    atrt_cols = [c for c in rna_expr.columns
-                                 if any(ind.lower() in c.lower() for ind in atrt_indicators)
-                                 and not any(n.lower() in c.lower() for n in normal_indicators)]
-
-                    if atrt_cols:
-                        mean_expr = rna_expr[atrt_cols].apply(
-                            pd.to_numeric, errors="coerce"
-                        ).mean(axis=1)
-                        result["upregulated_genes"] = set(
-                            mean_expr[mean_expr > threshold].index
-                        )
-                        result["has_rna_data"] = (
-                            len(result["upregulated_genes"]) >= 10
-                        )
-                        logger.info(
-                            "ATRT RNA: %d upregulated genes (z > %.1f) in %d samples",
-                            len(result["upregulated_genes"]), threshold, len(atrt_cols),
-                        )
-
-            except Exception as e:
-                logger.warning("RNA loading failed: %s", e)
-
-        return result
-
-    def _load_gse70678_fallback(self, result: Dict) -> Dict:
-        """Load GSE70678 as RNA fallback when CBTN data unavailable."""
-        import pandas as pd
-
-        gse_path = Path("data/raw_omics/GSE70678_ATRT_expression.txt")
-        if not gse_path.exists():
-            logger.info(
-                "GSE70678 not found. Using prevalence priors only. "
-                "Download from: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE70678"
-            )
-            # Use published prevalence priors (Johann 2016)
-            result["smarcb1_loss_count"] = 0
-            result["total_samples"] = 0
-            result["subgroup_counts"] = {"TYR": 18, "SHH": 18, "MYC": 13}  # Johann 2016 n=49
-            return result
-
-        try:
-            df = pd.read_csv(gse_path, sep="\t", index_col=0)
-            df.index = df.index.astype(str).str.upper().str.strip()
-
-            # Separate ATRT from normal columns using GSE70678 naming
-            atrt_indicators = self.config["rna_atrt_col_indicators"]
-            normal_indicators = self.config["rna_normal_col_indicators"]
-
-            atrt_cols = [c for c in df.columns
-                         if any(ind.lower() in c.lower() for ind in atrt_indicators)
-                         and not any(n.lower() in c.lower() for n in normal_indicators)]
-            normal_cols = [c for c in df.columns
-                           if any(n.lower() in c.lower() for n in normal_indicators)]
-
-            if not atrt_cols:
-                logger.warning("No ATRT columns identified in GSE70678. Check column names.")
-                return result
-
-            result["total_samples"] = len(atrt_cols)
-            threshold = self.config["rna_upregulation_zscore"]
-
-            df_numeric = df.apply(pd.to_numeric, errors="coerce")
-            atrt_mean = df_numeric[atrt_cols].mean(axis=1)
-
-            if normal_cols:
-                normal_mean = df_numeric[normal_cols].mean(axis=1)
-                diff = atrt_mean - normal_mean
-            else:
-                diff = atrt_mean
-
-            result["upregulated_genes"] = set(diff[diff > threshold].index)
-            result["has_rna_data"] = len(result["upregulated_genes"]) >= 10
-            result["smarcb1_loss_count"] = len(atrt_cols)  # All ATRT are SMARCB1-null
-
-            logger.info(
-                "GSE70678 fallback: %d ATRT samples, %d upregulated genes",
-                len(atrt_cols), len(result["upregulated_genes"]),
-            )
-
-        except Exception as e:
-            logger.warning("GSE70678 loading failed: %s", e)
-
-        return result
-
-
-async def run_atrt_pipeline(
-    disease_name: str = "atrt",
-    subgroup: Optional[str] = None,
-    top_n: int = 20,
-    location: str = "unknown",  # "infratentorial", "supratentorial", "unknown"
-    predict_combinations: bool = True,
-) -> Dict:
-    """
-    Run the full ATRT scoring pipeline.
-
-    Parameters
-    ----------
-    disease_name : str
-        Should be "atrt" or similar.
-    subgroup : str or None
-        "TYR", "SHH", "MYC", or None (pan-ATRT scoring).
-    top_n : int
-        Number of top candidates to return.
-    location : str
-        Tumour location — affects BBB penalty severity.
-    predict_combinations : bool
-        Whether to run synergy prediction.
-    """
-    from backend.pipeline.discovery_pipeline import ProductionPipeline
-    from backend.pipeline.atrt_specialization import (
-        ATRTSpecializedScorer,
-        ATRT_CORE_GENES,
-        get_atrt_disease_data_supplement,
-        augment_disease_data_for_atrt,
-    )
-    from backend.pipeline.polypharmacology import PolypharmacologyScorer
-    from backend.pipeline.synergy_predictor import SynergyPredictor
-    from backend.pipeline.atrt_pipeline_config import (
-        ATRT_BBB_PENALTIES,
-        ATRT_COMPOSITE_WEIGHTS,
-    )
-
-    logger.info("=" * 70)
-    logger.info("ATRT Drug Repurposing Pipeline v1.0")
-    logger.info("  Subgroup: %s | Location: %s", subgroup or "pan-ATRT", location)
-    logger.info("=" * 70)
-
-    # ── Step 1: Base pipeline ─────────────────────────────────────────────────
-    logger.info("[1/5] Running base ProductionPipeline for ATRT...")
-    pipeline = ProductionPipeline()
-    await pipeline.initialize(disease=disease_name)
-    results = await pipeline.run(disease_name=disease_name, top_k=top_n)
-
-    hypotheses = results.get("hypotheses", [])
-    stats = results.get("stats", {})
-
-    # ── Step 2: ATRT genomic validation ────────────────────────────────────────
-    logger.info("[2/5] Running ATRT genomic validation...")
-    validator = ATRTPipelineValidator()
-    genomic_stats = validator.validate_atrt_cohort()
-
-    logger.info(
-        "  SMARCB1 loss: %d samples | RNA upregulated: %d genes | has_rna: %s",
-        genomic_stats.get("smarcb1_loss_count", 0),
-        len(genomic_stats.get("upregulated_genes", set())),
-        genomic_stats.get("has_rna_data", False),
-    )
-
-    # ── Step 3: ATRT specialization ───────────────────────────────────────────
-    logger.info("[3/5] Applying ATRT SMARCB1/EZH2 specialization...")
-    candidates = await pipeline._data_fetcher.fetch_approved_drugs()
-
-    if not candidates:
-        logger.warning("No candidates — using fallback library")
-        candidates = [
-            {"name": "Tazemetostat",  "targets": ["EZH2"]},
-            {"name": "Panobinostat",  "targets": ["HDAC1", "HDAC2", "HDAC3"]},
-            {"name": "Alisertib",     "targets": ["AURKA"]},
-            {"name": "Birabresib",    "targets": ["BRD4", "BRD2", "BRD3"]},
-            {"name": "Abemaciclib",   "targets": ["CDK4", "CDK6"]},
-            {"name": "Marizomib",     "targets": ["PSMB5", "PSMB2", "PSMB1"]},
-        ]
-
-    atrt_scorer = ATRTSpecializedScorer(
-        subgroup=subgroup,
-        smarcb1_synleth_bonus=0.15,
-        novelty_bonus=0.08,
-    )
-    candidates = atrt_scorer.score_batch(candidates)
-
-    # ── Step 4: ATRT BBB penalty (location-aware) ─────────────────────────────
-    bbb_penalties = ATRT_BBB_PENALTIES.get(location, ATRT_BBB_PENALTIES["unknown_location"])
-    n_penalised = 0
-    for c in candidates:
-        bbb = c.get("bbb_penetrance", "UNKNOWN")
-        if bbb in bbb_penalties:
-            c["score_before_atrt_bbb"] = c["score"]
-            c["score"] = round(c["score"] * bbb_penalties[bbb], 4)
-            c["atrt_bbb_penalty"] = bbb_penalties[bbb]
-            n_penalised += 1
-
-    if n_penalised:
-        logger.info(
-            "ATRT BBB penalty applied (%s location): %d candidates penalised",
-            location, n_penalised,
-        )
-
-    # ── Step 5: IC50 annotation ────────────────────────────────────────────────
-    try:
-        from backend.pipeline.published_ic50_atrt_validation import (
-            annotate_atrt_candidates_with_ic50,
-        )
-        candidates = annotate_atrt_candidates_with_ic50(candidates)
-    except Exception as e:
-        logger.debug("ATRT IC50 annotation skipped: %s", e)
-
-    # Sort final
-    top_candidates = sorted(
-        candidates, key=lambda x: x.get("score", 0), reverse=True
-    )[:top_n]
-
-    # ── Subgroup report ────────────────────────────────────────────────────────
-    subgroup_report = atrt_scorer.generate_subgroup_report(top_candidates)
-
-    # ── Combination prediction ─────────────────────────────────────────────────
-    top_combinations = []
-    if predict_combinations:
-        syn_predictor = SynergyPredictor()
-        top_combinations = syn_predictor.predict_top_combinations(top_candidates[:30])
-
-    # ── Summary logging ────────────────────────────────────────────────────────
-    logger.info("\n" + "=" * 70)
-    logger.info("ATRT RESULTS — Top 10")
-    logger.info("%-30s %6s %8s %8s %8s", "Drug", "Score", "EZH2↑", "AURKA", "BBB")
-    logger.info("-" * 65)
-    for c in top_candidates[:10]:
-        name   = (c.get("name") or "?")[:29]
-        score  = c.get("score", 0)
-        ezh2b  = "YES" if c.get("atrt_components", {}).get("ezh2_boosted") else "-"
-        aurka  = "YES" if c.get("atrt_components", {}).get("is_aurka_inhibitor") else "-"
-        bbb    = c.get("bbb_penetrance", "?")
-        logger.info("%-30s %6.3f %8s %8s %8s", name, score, ezh2b, aurka, bbb)
-
-    return {
-        "hypotheses":         hypotheses,
-        "top_candidates":     top_candidates,
-        "subgroup_report":    subgroup_report,
-        "top_combinations":   top_combinations,
-        "genomic_stats":      {
-            k: v for k, v in genomic_stats.items()
-            if k != "upregulated_genes"
-        },
-        "stats": {
-            **stats,
-            "smarcb1_loss_count":   genomic_stats.get("smarcb1_loss_count", 0),
-            "rna_upregulated_genes": len(genomic_stats.get("upregulated_genes", set())),
-            "subgroup":             subgroup or "pan-ATRT",
-            "location":             location,
-            "escape_bypass_mode":   "RNA-confirmed" if genomic_stats.get("has_rna_data") else "curated fallback",
-            "n_ezh2_boosted":       sum(
-                1 for c in top_candidates
-                if c.get("atrt_components", {}).get("ezh2_boosted")
-            ),
-        },
-        "pipeline_stats": {
-            "disease":           "ATRT",
-            "subgroup":          subgroup or "pan-ATRT",
-            "total_candidates":  len(candidates),
-            "location":          location,
-            "v1_features": [
-                "EZH2 inhibitor BOOST (synthetic lethality with SMARCB1 loss)",
-                "AURKA inhibitor boost (MYCN stabilisation, MYC subgroup)",
-                "SMO/GLI inhibitor boost (SHH subgroup)",
-                "Location-aware BBB penalty (infratentorial vs supratentorial)",
-                "GSE70678 bulk RNA tissue scoring",
-                "Published IC50 validation (BT16, BT37, G401, A204, CHLA lines)",
-                "Subgroup stratification report (TYR/SHH/MYC — Johann 2016)",
-            ],
-            "key_difference_from_dipg": (
-                "EZH2 inhibitors (tazemetostat) are BOOSTED in ATRT due to SMARCB1 "
-                "synthetic lethality — the OPPOSITE of DIPG where EZH2 inhibitors "
-                "are penalised. This is the most important disease-specific difference."
-            ),
-        },
+def check_data_files() -> bool:
+    """Verify required data files exist. Print instructions if missing."""
+    required = {
+        "data/depmap/CRISPRGeneEffect.csv":
+            "Download from https://depmap.org/portal/download/all/ (DepMap Public 24Q4)",
+        "data/depmap/Model.csv":
+            "Download from https://depmap.org/portal/download/all/ (same package)",
+    }
+    optional = {
+        "data/raw_omics/GSE70678_gene_expression.tsv":
+            "Run: python -m backend.pipeline.data_downloader --dataset gse70678 gpl6244 --process all",
+        "data/raw_omics/GTEx_brain_normal_reference.tsv":
+            "Run: python -m backend.pipeline.data_downloader --dataset gtex_brain --process gtex",
+        "data/cmap_query/atrt_cmap_scores.json":
+            "Run: python scripts/01_prepare_cmap.py → submit to clue.io → integrate_cmap_results.py",
     }
 
+    all_ok = True
+    print("\n" + "=" * 60)
+    print("DATA FILE CHECK")
+    print("=" * 60)
 
-async def _cli_main(
-    disease: str,
-    subgroup: Optional[str],
-    location: str,
-    output: Optional[str],
-    top_n: int,
-    combinations: bool,
+    for path_str, instructions in required.items():
+        path = REPO_ROOT / path_str
+        if path.exists():
+            size_mb = path.stat().st_size / 1e6
+            print(f"  ✅ {path_str} ({size_mb:.1f} MB)")
+        else:
+            print(f"  ❌ MISSING: {path_str}")
+            print(f"     → {instructions}")
+            all_ok = False
+
+    print()
+    for path_str, instructions in optional.items():
+        path = REPO_ROOT / path_str
+        if path.exists():
+            size_mb = path.stat().st_size / 1e6
+            print(f"  ✅ {path_str} ({size_mb:.1f} MB)")
+        else:
+            print(f"  ⚠️  OPTIONAL (missing): {path_str}")
+            print(f"     → {instructions}")
+
+    print("=" * 60)
+
+    if not all_ok:
+        print("\n❌ Required files missing. Download them before running the pipeline.")
+        print("   Pipeline will still run using fallback values, but DepMap scores")
+        print("   will be from published literature rather than your local CSV.")
+    else:
+        print("\n✅ All required files present.")
+
+    return all_ok
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Optional data download
+# ─────────────────────────────────────────────────────────────────────────────
+
+def download_and_process_optional_data():
+    """Download and process GSE70678 + GTEx if not already present."""
+    gene_expr = REPO_ROOT / "data/raw_omics/GSE70678_gene_expression.tsv"
+    gtex_ref  = REPO_ROOT / "data/raw_omics/GTEx_brain_normal_reference.tsv"
+
+    if gene_expr.exists() and gtex_ref.exists():
+        logger.info("Optional RNA data already present — skipping download.")
+        return
+
+    logger.info("Downloading optional RNA data (GSE70678 + GTEx)...")
+    import subprocess
+    cmds = []
+
+    if not (REPO_ROOT / "data/raw_omics/GSE70678_series_matrix.txt.gz").exists():
+        cmds.append([
+            sys.executable, "-m", "backend.pipeline.data_downloader",
+            "--dataset", "gpl6244", "gse70678", "gtex_brain",
+        ])
+
+    if not gene_expr.exists() or not gtex_ref.exists():
+        cmds.append([
+            sys.executable, "-m", "backend.pipeline.data_downloader",
+            "--process", "all",
+        ])
+
+    for cmd in cmds:
+        result = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=False)
+        if result.returncode != 0:
+            logger.warning("Data download/process step returned non-zero exit code.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main pipeline run
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def run_pipeline(
+    subgroup:     str  = None,
+    location:     str  = "unknown_location",
+    top_n:        int  = 20,
+    generic_only: bool = False,
+    output_path:  Path = None,
 ):
-    result = await run_atrt_pipeline(
-        disease_name=disease,
-        subgroup=subgroup,
-        top_n=top_n,
-        location=location,
-        predict_combinations=combinations,
+    from backend.pipeline.discovery_pipeline import ProductionPipeline
+
+    output_path = output_path or REPO_ROOT / "results/atrt_pipeline_results.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    logger.info("")
+    logger.info("=" * 65)
+    logger.info("ATRT Drug Repurposing Pipeline v1.0")
+    logger.info("  Subgroup    : %s", subgroup or "pan-ATRT")
+    logger.info("  Location    : %s", location)
+    logger.info("  Generic only: %s", generic_only)
+    logger.info("  Top N       : %d", top_n)
+    logger.info("  Output      : %s", output_path)
+    logger.info("=" * 65)
+
+    pipeline = ProductionPipeline(generic_only=generic_only)
+    await pipeline.initialize()
+
+    result = await pipeline.run(
+        disease_name  = "atrt",
+        top_k         = top_n,
+        subgroup      = subgroup,
+        location      = location,
+        generic_only  = generic_only,
     )
 
-    print("\n" + "=" * 70)
-    print("ATRT TOP CANDIDATES")
-    print("=" * 70)
-    for i, c in enumerate(result["top_candidates"][:10], 1):
-        ezh2 = "⬆ EZH2-BOOST" if c.get("atrt_components", {}).get("ezh2_boosted") else ""
-        ic50 = f"  IC50={c.get('ic50_um', 'N/A')} µM ({c.get('ic50_cell_line', '')})" if c.get("ic50_validated") else ""
-        print(f"  {i:2d}. {c.get('name','?'):<28} score={c.get('score',0):.3f}  "
-              f"BBB={c.get('bbb_penetrance','?'):<10}{ezh2}{ic50}")
+    # Print results table
+    candidates = result.get("top_candidates", [])
+    stats      = result.get("stats", {})
 
-    print("\n" + "=" * 70)
-    print("SUBGROUP STRATIFICATION REPORT")
-    print("=" * 70)
-    print(result["subgroup_report"])
+    print("\n" + "=" * 80)
+    print(f"TOP {min(len(candidates), 12)} ATRT DRUG CANDIDATES")
+    if generic_only:
+        print("(GENERIC DRUGS ONLY — FDA-approved generics)")
+    print("=" * 80)
+    print(f"  {'Rank':<4}  {'Drug':<26}  {'Score':>6}  {'BBB':<10}  "
+          f"{'EZH2↑':>5}  {'AURKA↑':>6}  {'Generic':>8}  IC50 (µM)")
+    print("-" * 80)
 
-    print("\n" + "=" * 70)
-    print("KEY PIPELINE STATS")
-    print("=" * 70)
-    s = result["stats"]
-    print(f"  Subgroup:            {s.get('subgroup', 'pan-ATRT')}")
-    print(f"  EZH2 inhibitors boosted: {s.get('n_ezh2_boosted', 0)}")
-    print(f"  RNA upregulated genes:   {s.get('rna_upregulated_genes', 0)}")
-    print(f"  Escape bypass mode:      {s.get('escape_bypass_mode', 'N/A')}")
+    for i, c in enumerate(candidates[:12], 1):
+        ic50_str  = f"{c.get('ic50_um')} ({c.get('ic50_cell_line', '')})" \
+                    if c.get("ic50_validated") else "—"
+        ezh2_str  = "YES" if c.get("ezh2_boosted")  else "—"
+        aurka_str = "YES" if c.get("aurka_boosted") else "—"
+        gen_str   = "✓" if c.get("has_generic") else "—"
+        print(
+            f"  {i:<4}  {c.get('name','?'):<26}  {c.get('score',0):>6.3f}  "
+            f"{c.get('bbb_penetrance','?'):<10}  "
+            f"{ezh2_str:>5}  {aurka_str:>6}  {gen_str:>8}  {ic50_str}"
+        )
 
-    if output:
-        Path(output).parent.mkdir(parents=True, exist_ok=True)
-        with open(output, "w") as f:
-            json.dump(result, f, indent=2, default=str)
-        print(f"\nResults saved to: {output}")
+    # Hypothesis
+    hyps = result.get("hypotheses", [])
+    if hyps:
+        h  = hyps[0]
+        bd = h.get("confidence_breakdown", {})
+        print(f"\n{'=' * 65}")
+        print("TOP COMBINATION HYPOTHESIS")
+        print(f"{'=' * 65}")
+        print(f"  Combo : {h.get('drug_or_combo', '?')}")
+        print(f"  Conf  : {bd.get('confidence_range', h.get('confidence', '?'))}")
+        print(f"  EZH2  : {bd.get('ezh2_combo_note', 'N/A')[:60]}")
+
+    # Stats
+    print(f"\n{'=' * 65}")
+    print("PIPELINE STATISTICS")
+    print(f"{'=' * 65}")
+    print(f"  Drugs screened   : {stats.get('n_screened', '?')}")
+    print(f"  SMARCB1 loss     : {stats.get('smarcb1_loss_count', 0)}/{stats.get('total_samples', 0)}")
+    print(f"  RNA upregulated  : {stats.get('rna_upregulated_genes', 0)} genes")
+    print(f"  EZH2 boosted     : {stats.get('n_ezh2_boosted', 0)}")
+    print(f"  Escape bypass    : {stats.get('escape_bypass_mode', 'N/A')}")
+    print(f"  Generic only     : {stats.get('generic_only', False)}")
+
+    # Save JSON
+    def _safe(obj):
+        import math
+        if isinstance(obj, set):  return sorted(obj)
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)): return None
+        raise TypeError(type(obj))
+
+    with open(output_path, "w") as f:
+        json.dump({
+            "run_timestamp":   datetime.now().isoformat(),
+            "disease":         "atrt",
+            "subgroup":        subgroup or "pan-ATRT",
+            "location":        location,
+            "generic_only":    generic_only,
+            "stats":           stats,
+            "top_candidates":  candidates,
+            "hypotheses":      hyps,
+        }, f, indent=2, default=_safe)
+
+    logger.info("\n✅ Results saved → %s", output_path)
+
+    # Optional: generate figures
+    try:
+        from backend.pipeline.generate_figures import (
+            fig1_smarcb1_biology, fig2_drug_rankings,
+            fig3_score_scatter, fig4_confidence,
+        )
+        data_for_figs = {
+            "stats": {
+                "smarcb1_loss_count":   stats.get("smarcb1_loss_count", 0),
+                "smarca4_loss_count":   stats.get("smarca4_loss_count", 0),
+                "total_atrt_samples":   stats.get("total_samples", 0),
+                "n_drugs_screened":     stats.get("n_screened", 0),
+                "n_ezh2_boosted":       stats.get("n_ezh2_boosted", 0),
+                "n_aurka_boosted":      stats.get("n_aurka_boosted", 0),
+            },
+            "top_candidates": candidates,
+            "hypotheses":     hyps,
+            "confidence_breakdown": hyps[0].get("confidence_breakdown") if hyps else {},
+        }
+        fig1_smarcb1_biology(data_for_figs)
+        fig2_drug_rankings(data_for_figs, top_n=min(len(candidates), 12))
+        fig3_score_scatter(data_for_figs)
+        fig4_confidence(data_for_figs)
+        logger.info("✅ Figures saved → figures/atrt/")
+    except Exception as e:
+        logger.warning("Figures skipped: %s", e)
+
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI
+# ─────────────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="ATRT Drug Repurposing Pipeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Full pan-ATRT run
+  python scripts/run_pipeline.py
+
+  # Generic drugs only (valproic acid, sirolimus, etc.)
+  python scripts/run_pipeline.py --generic-only
+
+  # Subgroup-specific
+  python scripts/run_pipeline.py --subgroup MYC --location supratentorial
+
+  # Check data files only
+  python scripts/run_pipeline.py --check-data
+        """,
+    )
+    parser.add_argument("--subgroup",     default=None, choices=["TYR", "SHH", "MYC"],
+                        help="ATRT molecular subgroup (default: pan-ATRT)")
+    parser.add_argument("--location",     default="unknown_location",
+                        choices=["infratentorial", "supratentorial", "unknown_location"],
+                        help="Tumour location — affects BBB penalty")
+    parser.add_argument("--top-n",        default=20, type=int,
+                        help="Number of top candidates to report (default: 20)")
+    parser.add_argument("--generic-only", action="store_true",
+                        help="Keep only drugs with FDA-approved generic formulations")
+    parser.add_argument("--output",       default=None,
+                        help="Output JSON path (default: results/atrt_pipeline_results.json)")
+    parser.add_argument("--check-data",   action="store_true",
+                        help="Check data files and exit")
+    parser.add_argument("--download",     action="store_true",
+                        help="Download optional RNA data (GSE70678 + GTEx) before running")
+    args = parser.parse_args()
+
+    # Data check
+    check_data_files()
+
+    if args.check_data:
+        sys.exit(0)
+
+    if args.download:
+        download_and_process_optional_data()
+
+    output = Path(args.output) if args.output else None
+    asyncio.run(run_pipeline(
+        subgroup     = args.subgroup,
+        location     = args.location,
+        top_n        = args.top_n,
+        generic_only = args.generic_only,
+        output_path  = output,
+    ))
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="ATRT Drug Repurposing Pipeline v1.0")
-    parser.add_argument("--disease",   default="atrt")
-    parser.add_argument("--subgroup",  default=None,
-                        choices=["TYR", "SHH", "MYC", None],
-                        help="ATRT molecular subgroup (omit for pan-ATRT)")
-    parser.add_argument("--location",  default="unknown",
-                        choices=["infratentorial", "supratentorial", "unknown"],
-                        help="Tumour location for BBB penalty")
-    parser.add_argument("--output",    default="results/atrt_pipeline_results.json")
-    parser.add_argument("--top_n",     default=20, type=int)
-    parser.add_argument("--combinations", action="store_true")
-    args = parser.parse_args()
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s  %(levelname)-8s  %(message)s",
-        datefmt="%H:%M:%S",
-    )
-    asyncio.run(_cli_main(
-        args.disease, args.subgroup, args.location,
-        args.output, args.top_n, args.combinations,
-    ))
+    main()
