@@ -1,0 +1,33 @@
+{
+  "name": "atrtresearch",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "**A multi-omic computational pipeline for prioritising drug combinations in SMARCB1-deficient Atypical Teratoid/Rhabdoid Tumor (ATRT)**",
+  "main": "index.js",
+  "scripts": {
+  "dev": "vite",
+  "build": "vite build",
+  "lint": "eslint .",
+  "preview": "vite preview"
+},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ShruthiSathya/ATRTresearch.git"
+  },
+  "dependencies": {
+  "axios": "^1.7.0",
+  "react": "^18.2.0",
+  "react-dom": "^18.2.0"
+},
+"devDependencies": {
+    "vite": "^5.0.0",
+    "@vitejs/plugin-react": "^4.0.0"
+},
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ShruthiSathya/ATRTresearch/issues"
+  },
+  "homepage": "https://github.com/ShruthiSathya/ATRTresearch#readme"
+}
