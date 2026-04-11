@@ -7,6 +7,8 @@ data/cmap_query/cmap_results_ncs.gct
 *.csv
 *.tsv
 *.gz
+.env
+
 
 # Ignore python cache
 __pycache__/
@@ -14,3 +16,5 @@ __pycache__/
 data/validation/
 __pycache__/
 .DS_Store
+/venv/
+node_modules
