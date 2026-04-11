@@ -1,0 +1,77 @@
+=================================================================
+ATRT Drug Repurposing Pipeline — save_results.py v2.1
+  disease   : atrt
+  top_n     : 20
+  subgroup  : pan-ATRT
+  location  : unknown_location
+  timestamp : 2026-04-11 00:34:20
+=================================================================
+CMap: loaded ATRT scores from /Users/shruthisathya/bioforge_product/gbmresearch/data/cmap_query/atrt_cmap_scores.json
+✅ CMap ATRT: 38971 pre-computed scores from /Users/shruthisathya/bioforge_product/gbmresearch/data/cmap_query/atrt_cmap_scores.json
+✅ PPI Network Module v5.5 (Extended proteasome neighbors + Marizomib fix)
+DepMapEssentiality v3.0 (paths: /Users/shruthisathya/bioforge_product/gbmresearch/data/depmap/CRISPRGeneEffect.csv, /Users/shruthisathya/bioforge_product/gbmresearch/data/depmap/Model.csv)
+SynergyPredictor v2.0 (ATRT): 5 published CI entries, 11 target-pair synergy rules
+HypothesisGenerator v1.0 (ATRT — SMARCB1 synthetic lethality logic)
+BBBFilter v3.0 (MW limit=800.0 Da | tazemetostat=MODERATE | no duplicates)
+ProductionPipeline v2.0 (generic_only=False)
+Pipeline run: disease=atrt subgroup=pan-ATRT location=unknown_location generic_only=False top_k=20
+Fetching from OpenTargets (EFOs: ['EFO_0002915', 'EFO_0000543', 'EFO_0000519', 'EFO_0001422', 'EFO_0000618']) ...
+  EFO EFO_0002915: 0 drugs, 0 pages
+  EFO EFO_0000543: 0 drugs, 0 pages
+  EFO EFO_0000519: 0 drugs, 0 pages
+  EFO EFO_0001422: 0 drugs, 0 pages
+  EFO EFO_0000618: 0 drugs, 0 pages
+OpenTargets: 0 unique drugs retrieved
+OpenTargets returned 0 drugs — using ATRT curated fallback library (24 drugs). Generic status will still be checked via FDA/RxNorm.
+Merge: 24 OT drugs + 24 fallback → 24 unique total (24 enriched, 0 added from fallback)
+Loaded generic drug cache (4 entries)
+Generic status annotated: 9/24 candidates have generics available
+Generic annotation complete: 9/24 drugs have generics available
+Total candidates after merge + annotation: 24
+Scoring 26 candidates...
+GSE70678 fallback: 49 ATRT samples, 21726 upregulated genes
+Genomics: method=gse70678_fallback | SMARCB1_loss=49/49 | upregulated_genes=21726
+Loading GSE70678 gene expression: /Users/shruthisathya/bioforge_product/gbmresearch/data/raw_omics/GSE70678_gene_expression.tsv
+Loaded 21752 genes × 49 samples
+GTEx reference loaded: 73321 genes, 14 brain tissue columns
+GSE70678 differential: 18161 genes in common with GTEx (49 ATRT samples vs 73321 reference tissues)
+✅ GSE70678 loaded: 18161 genes | 18093 up, 68 down vs normal brain
+   Percentiles: p25=12.58 p50=41.76 p75=141.11 p90=364.96
+Tissue scoring: 26 candidates | range=[0.31, 0.93]
+Loading DepMap from CSV files...
+Tier 1 (OncotreeSubtype): 22 ATRT/rhabdoid lines
+Loading CRISPRGeneEffect.csv for 22 cell lines...
+Matched 15/22 ATRT cell lines in CRISPRGeneEffect.csv
+✅ DepMap loaded from CSV: 15 lines | 17787 genes | 875 strongly essential
+   Cell lines: ['G-401', 'TTC-709', 'COG-AR-359', 'KYM-1', 'CHLA-266', 'G-402', 'BT-12', 'TTC-549', 'BT-16', 'KD', 'NCI-H2004 RT', 'TM-87', 'CHLA-06-ATRT', 'MON', 'JMU-RTK-2']
+✅ PPI scoring v5.5: 26 candidates | distribution: {1.0: 12, 0.85: 2, 0.6: 1, 0.2: 11} (Marizomib proteasome fix applied)
+ATRT boosts applied: EZH2×1 | AURKA×1 | SMO×0
+BBBFilter: penalised 3 known GBM/CNS failures
+ATRT IC50 annotation: 6 verified | 2 no primary data | 18 not in database | 0 discordances
+Toxicity — TAZEMETOSTAT + ALISERTIB + PANOBINOSTAT: 40.0% (HIGH_RISK), mult=0.600 [conservative] / 0.760 [optimistic]
+CMap: loaded ATRT scores from /Users/shruthisathya/bioforge_product/gbmresearch/data/cmap_query/atrt_cmap_scores.json
+✅ CMap ATRT: 38971 pre-computed scores from /Users/shruthisathya/bioforge_product/gbmresearch/data/cmap_query/atrt_cmap_scores.json
+
+✅ Results saved to : results/atrt_pipeline_results.json
+✅ n_drugs_screened : 26
+✅ CMap status      : live scores
+
+Next step: python -m backend.pipeline.generate_figures
+
+── SMARCB1 Statistics ────────────────────────────────
+  SMARCB1 loss     : 49/49 samples
+  SMARCA4 loss     : 0 samples
+  Statistical note : N/A — SMARCB1 biallelic loss is the defining event in ATRT (Hasselblatt 2011 PMID 20625942)
+
+── Top 8 Candidates ──────────────────────────────────────
+  Drug                        Score  BBB          Generic   EZH2↑   AURKA↑  IC50 (µM)
+  Tazemetostat                1.000  MODERATE           —     YES        —  0.88 (G401)
+  Alisertib                   0.963  HIGH               —       —      YES  0.098 (BT16)
+  Panobinostat                0.906  HIGH               —       —        —  0.0085 (BT16)
+  Valproic acid               0.906  HIGH        ✓ GENERIC       —        —  —
+  Birabresib                  0.903  MODERATE           —       —        —  0.31 (BT16)
+  Marizomib                   0.877  HIGH               —       —        —  —
+  Abemaciclib                 0.822  HIGH               —       —        —  0.75 (BT16)
+  Entinostat                  0.816  UNKNOWN            —       —        —  —
+
+  Total drugs screened: 26
